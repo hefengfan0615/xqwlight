@@ -1,2 +1,0 @@
-Release\XQWLight.ocx
-MAKEFILE\xqwlight.inf
