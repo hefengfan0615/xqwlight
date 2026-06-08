@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <title>Pikafish-HCE-JS · 强象棋引擎</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <div class="title">
+        <span class="brand-mark">P</span>
+        <div>
+          <h1>Pikafish-HCE-JS</h1>
+          <p class="subtitle">JavaScript port · 强象棋搜索引擎 · 16+ 层轻松搜索 · Web Worker 异步思考</p>
+        </div>
+      </div>
+      <div class="status-pill" id="statusPill">
+        <span class="status-dot"></span>
+        <span id="statusText">就绪</span>
+      </div>
+    </header>
+
+    <div class="layout">
+      <section class="board-wrap">
+        <div id="boardContainer" class="board"></div>
+        <div class="search-info" id="searchInfo">
+          <div class="si-row">
+            <div class="si-item">
+              <span class="si-label">深度</span>
+              <span class="si-value" id="siDepth">-</span>
+            </div>
+            <div class="si-item">
+              <span class="si-label">评分</span>
+              <span class="si-value" id="siScore">-</span>
+            </div>
+            <div class="si-item">
+              <span class="si-label">节点</span>
+              <span class="si-value" id="siNodes">-</span>
+            </div>
+            <div class="si-item">
+              <span class="si-label">KNPS</span>
+              <span class="si-value" id="siNps">-</span>
+            </div>
+            <div class="si-item">
+              <span class="si-label">用时</span>
+              <span class="si-value" id="siTime">-</span>
+            </div>
+          </div>
+          <div class="si-pv-wrap">
+            <span class="si-label">思考路径 (PV)</span>
+            <div class="si-pv" id="siPV">-</div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="side">
+        <div class="card">
+          <h3>对局控制</h3>
+          <div class="form-row">
+            <label>先走方</label>
+            <select id="selSide">
+              <option value="0" selected>玩家先走 (红)</option>
+              <option value="1">电脑先走 (黑)</option>
+              <option value="2">人人对弈</option>
+              <option value="3">电脑自弈</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>引擎深度</label>
+            <select id="selDepth">
+              <option value="6">6 层 (快速)</option>
+              <option value="10">10 层 (普通)</option>
+              <option value="14">14 层 (强)</option>
+              <option value="16" selected>16 层 (Pikafish 级)</option>
+              <option value="20">20 层 (极限)</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>思考时间 (秒)</label>
+            <input id="selTime" type="number" value="6" min="1" max="60">
+          </div>
+          <div class="form-row btn-row">
+            <button id="btnNew" class="btn-primary">新对局</button>
+            <button id="btnUndo" class="btn-secondary">悔棋</button>
+            <button id="btnHint" class="btn-secondary">提示走法</button>
+            <button id="btnStop" class="btn-stop" style="display:none;">停止</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>对局信息</h3>
+          <div class="info-grid">
+            <div><span class="k">回合</span><span class="v" id="movesCount">0</span></div>
+            <div><span class="k">走子方</span><span class="v" id="turnInfo">红方</span></div>
+            <div><span class="k">TT 容量</span><span class="v">1 M 项</span></div>
+            <div><span class="k">运行</span><span class="v">Web Worker</span></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>走法记录</h3>
+          <div class="movelist" id="moveList"></div>
+        </div>
+      </aside>
+    </div>
+
+    <footer class="foot">
+      <span>Pikafish-HCE principles · JS implementation · AlphaBeta + PVS + TT + NMP + LMR + QSearch</span>
+    </footer>
+  </div>
+
+  <script type="text/javascript" src="js/position.js"></script>
+  <script type="text/javascript" src="js/search.js"></script>
+  <script type="text/javascript" src="js/board.js"></script>
+  <script type="text/javascript" src="js/main.js"></script>
+</body>
+</html>
