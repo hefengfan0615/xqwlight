@@ -1,0 +1,554 @@
+"use strict";
+
+const T = require('./types.js');
+
+// ==============================================
+// Bitboard implementation
+// ==============================================
+
+// We'll use an array to represent the board state for easier manipulation in JS
+// Also keep bitboard-like representation for compatibility
+
+class Bitboard {
+  constructor(low = 0, high = 0) {
+    this.low = low >>> 0;
+    this.high = high >>> 0;
+  }
+
+  // Convert to boolean
+  toBool() {
+    return this.low !== 0 || this.high !== 0;
+  }
+
+  // Copy
+  clone() {
+    return new Bitboard(this.low, this.high);
+  }
+
+  // Set a bit
+  set(sq) {
+    if (sq < 64) {
+      this.low |= 1 << sq;
+    } else {
+      this.high |= 1 << (sq - 64);
+    }
+    return this;
+  }
+
+  // Clear a bit
+  clear(sq) {
+    if (sq < 64) {
+      this.low &= ~(1 << sq);
+    } else {
+      this.high &= ~(1 << (sq - 64));
+    }
+    return this;
+  }
+
+  // Test a bit
+  test(sq) {
+    if (sq < 64) {
+      return (this.low & (1 << sq)) !== 0;
+    }
+    return (this.high & (1 << (sq - 64))) !== 0;
+  }
+
+  // Bitwise operations
+  not() {
+    return new Bitboard(~this.low, ~this.high);
+  }
+
+  and(other) {
+    return new Bitboard(this.low & other.low, this.high & other.high);
+  }
+
+  or(other) {
+    return new Bitboard(this.low | other.low, this.high | other.high);
+  }
+
+  xor(other) {
+    return new Bitboard(this.low ^ other.low, this.high ^ other.high);
+  }
+
+  // Shift operations
+  shl(amount) {
+    if (amount >= 64) {
+      return new Bitboard(0, this.low << (amount - 64));
+    } else if (amount === 0) {
+      return new Bitboard(this.low, this.high);
+    } else {
+      return new Bitboard(this.low << amount, (this.high << amount) | (this.low >>> (64 - amount)));
+    }
+  }
+
+  shr(amount) {
+    if (amount >= 64) {
+      return new Bitboard(this.high >>> (amount - 64), 0);
+    } else if (amount === 0) {
+      return new Bitboard(this.low, this.high);
+    } else {
+      return new Bitboard((this.low >>> amount) | (this.high << (64 - amount)), this.high >>> amount);
+    }
+  }
+
+  // Negation
+  neg() {
+    let carry = 1;
+    let newLow = (~this.low + carry) >>> 0;
+    let newHigh = (~this.high + (newLow < this.low ? 1 : 0)) >>> 0;
+    return new Bitboard(newLow, newHigh);
+  }
+
+  // Subtract
+  sub(other) {
+    let borrow = 0;
+    let newLow = this.low - other.low;
+    if (newLow < 0) {
+      borrow = 1;
+      newLow += 0x100000000;
+    }
+    let newHigh = this.high - other.high - borrow;
+    if (newHigh < 0) newHigh += 0x100000000;
+    return new Bitboard(newLow >>> 0, newHigh >>> 0);
+  }
+
+  // Equals
+  equals(other) {
+    return this.low === other.low && this.high === other.high;
+  }
+
+  // Count set bits (popcount)
+  popcount() {
+    let count = 0;
+    let n = this.low;
+    while (n) {
+      n &= n - 1;
+      count++;
+    }
+    n = this.high;
+    while (n) {
+      n &= n - 1;
+      count++;
+    }
+    return count;
+  }
+
+  // Find least significant bit
+  lsb() {
+    if (this.low !== 0) {
+      let n = this.low & -this.low;
+      let bitPos = 0;
+      while (n >>= 1) bitPos++;
+      return bitPos;
+    }
+    let n = this.high & -this.high;
+    let bitPos = 64;
+    while (n >>= 1) bitPos++;
+    return bitPos;
+  }
+
+  // Pop least significant bit
+  poplsb() {
+    if (this.low !== 0) {
+      let lsb = this.low & -this.low;
+      let bitPos = 0;
+      let n = lsb;
+      while (n >>= 1) bitPos++;
+      this.low ^= lsb;
+      return bitPos;
+    }
+    let lsb = this.high & -this.high;
+    let bitPos = 64;
+    let n = lsb;
+    while (n >>= 1) bitPos++;
+    this.high ^= lsb;
+    return bitPos;
+  }
+
+  // Static method to create from a single square
+  static square(sq) {
+    const b = new Bitboard();
+    b.set(sq);
+    return b;
+  }
+}
+
+// ==============================================
+// Predefined bitboards
+// ==============================================
+
+// Palace (9 squares for each side)
+const Palace = new Bitboard(0x70381C, 0xE07038);
+
+// File bitboards
+const FileABB = new Bitboard(0x8040201008040201, 0x20100);
+const FileBBB = new Bitboard(0x1008040201008040, 0x40200);
+const FileCBB = new Bitboard(0x2010080402010080, 0x80400);
+const FileDBB = new Bitboard(0x4020100804020100, 0x100800);
+const FileEBB = new Bitboard(0x8040201008040200, 0x201000);
+const FileFBB = new Bitboard(0x10080402010080400, 0x402000);
+const FileGBB = new Bitboard(0x20100804020100800, 0x804000);
+const FileHBB = new Bitboard(0x40201008040201000, 0x1008000);
+const FileIBB = new Bitboard(0x80402010080402000, 0x2010000);
+
+// Rank bitboards
+let Rank0BB = new Bitboard(0x1FF, 0);
+let Rank1BB = Rank0BB.shl(T.FILE_NB);
+let Rank2BB = Rank0BB.shl(T.FILE_NB * 2);
+let Rank3BB = Rank0BB.shl(T.FILE_NB * 3);
+let Rank4BB = Rank0BB.shl(T.FILE_NB * 4);
+let Rank5BB = Rank0BB.shl(T.FILE_NB * 5);
+let Rank6BB = Rank0BB.shl(T.FILE_NB * 6);
+let Rank7BB = Rank0BB.shl(T.FILE_NB * 7);
+let Rank8BB = Rank0BB.shl(T.FILE_NB * 8);
+let Rank9BB = Rank0BB.shl(T.FILE_NB * 9);
+
+const HalfBB = [
+  Rank0BB.or(Rank1BB).or(Rank2BB).or(Rank3BB).or(Rank4BB),
+  Rank5BB.or(Rank6BB).or(Rank7BB).or(Rank8BB).or(Rank9BB)
+];
+
+const PawnBB = [
+  HalfBB[T.BLACK].or(Rank3BB.and(FileABB)).or(Rank3BB.and(FileCBB)).or(Rank3BB.and(FileEBB)).or(Rank3BB.and(FileGBB)).or(Rank3BB.and(FileIBB)).or(Rank4BB.and(FileABB)).or(Rank4BB.and(FileCBB)).or(Rank4BB.and(FileEBB)).or(Rank4BB.and(FileGBB)).or(Rank4BB.and(FileIBB)),
+  HalfBB[T.WHITE].or(Rank6BB.and(FileABB)).or(Rank6BB.and(FileCBB)).or(Rank6BB.and(FileEBB)).or(Rank6BB.and(FileGBB)).or(Rank6BB.and(FileIBB)).or(Rank5BB.and(FileABB)).or(Rank5BB.and(FileCBB)).or(Rank5BB.and(FileEBB)).or(Rank5BB.and(FileGBB)).or(Rank5BB.and(FileIBB))
+];
+
+// Precompute PopCnt16
+const PopCnt16 = new Array(1 << 16);
+for (let i = 0; i < (1 << 16); i++) {
+  let count = 0;
+  let n = i;
+  while (n) {
+    n &= n - 1;
+    count++;
+  }
+  PopCnt16[i] = count;
+}
+
+// Precompute SquareDistance
+const SquareDistance = new Array(T.SQUARE_NB);
+for (let i = 0; i < T.SQUARE_NB; i++) {
+  SquareDistance[i] = new Array(T.SQUARE_NB);
+  for (let j = 0; j < T.SQUARE_NB; j++) {
+    SquareDistance[i][j] = Math.max(Math.abs(T.file_of(i) - T.file_of(j)), Math.abs(T.rank_of(i) - T.rank_of(j)));
+  }
+}
+
+// Precompute SquareBB
+const SquareBB = new Array(T.SQUARE_NB);
+for (let sq = 0; sq < T.SQUARE_NB; sq++) {
+  SquareBB[sq] = Bitboard.square(sq);
+}
+
+// Precompute LineBB and BetweenBB (simplified version)
+const LineBB = new Array(T.SQUARE_NB);
+const BetweenBB = new Array(T.SQUARE_NB);
+for (let i = 0; i < T.SQUARE_NB; i++) {
+  LineBB[i] = new Array(T.SQUARE_NB);
+  BetweenBB[i] = new Array(T.SQUARE_NB);
+  for (let j = 0; j < T.SQUARE_NB; j++) {
+    LineBB[i][j] = new Bitboard();
+    BetweenBB[i][j] = new Bitboard();
+    
+    if (i === j) continue;
+    
+    const fi = T.file_of(i);
+    const ri = T.rank_of(i);
+    const fj = T.file_of(j);
+    const rj = T.rank_of(j);
+    
+    if (fi === fj || ri === rj) {
+      let from = Math.min(i, j);
+      let to = Math.max(i, j);
+      for (let k = from; k <= to; k++) {
+        if (fi === T.file_of(k)) {
+          LineBB[i][j].set(k);
+          if (k > Math.min(i, j) && k < Math.max(i, j)) {
+            BetweenBB[i][j].set(k);
+          }
+        }
+      }
+      if (ri === rj) {
+        for (let f = Math.min(fi, fj); f <= Math.max(fi, fj); f++) {
+          let k = T.make_square(f, ri);
+          LineBB[i][j].set(k);
+          if (k > Math.min(i, j) && k < Math.max(i, j)) {
+            BetweenBB[i][j].set(k);
+          }
+        }
+      }
+    }
+  }
+}
+
+// Precompute PseudoAttacks, PawnAttacks
+const PseudoAttacks = new Array(T.PIECE_TYPE_NB);
+const PawnAttacks = new Array(T.COLOR_NB);
+const PawnAttacksTo = new Array(T.COLOR_NB);
+
+for (let pt = 0; pt < T.PIECE_TYPE_NB; pt++) {
+  PseudoAttacks[pt] = new Array(T.SQUARE_NB);
+  for (let sq = 0; sq < T.SQUARE_NB; sq++) {
+    PseudoAttacks[pt][sq] = new Bitboard();
+  }
+}
+
+for (let c = 0; c < T.COLOR_NB; c++) {
+  PawnAttacks[c] = new Array(T.SQUARE_NB);
+  PawnAttacksTo[c] = new Array(T.SQUARE_NB);
+  for (let sq = 0; sq < T.SQUARE_NB; sq++) {
+    PawnAttacks[c][sq] = new Bitboard();
+    PawnAttacksTo[c][sq] = new Bitboard();
+  }
+}
+
+// ==============================================
+// Helper functions
+// ==============================================
+
+function square_bb(sq) {
+  return SquareBB[sq];
+}
+
+function rank_bb(r) {
+  return Rank0BB.shl(T.FILE_NB * r);
+}
+
+function file_bb(f) {
+  return FileABB.shl(f);
+}
+
+function more_than_one(b) {
+  return b.and(b.sub(new Bitboard(1, 0))).toBool();
+}
+
+function shift(b, d) {
+  if (d === T.NORTH) return b.and(Rank9BB.not()).shl(T.NORTH);
+  if (d === T.SOUTH) return b.shr(T.NORTH);
+  if (d === T.EAST) return b.and(FileIBB.not()).shl(T.EAST);
+  if (d === T.WEST) return b.and(FileABB.not()).shr(T.WEST);
+  if (d === T.NORTH_EAST) return shift(shift(b, T.NORTH), T.EAST);
+  if (d === T.SOUTH_EAST) return shift(shift(b, T.SOUTH), T.EAST);
+  if (d === T.SOUTH_WEST) return shift(shift(b, T.SOUTH), T.WEST);
+  if (d === T.NORTH_WEST) return shift(shift(b, T.NORTH), T.WEST);
+  return new Bitboard();
+}
+
+function pawn_attacks_bb(c, sq) {
+  let b = Bitboard.square(sq);
+  let attack = shift(b, c === T.WHITE ? T.NORTH : T.SOUTH);
+  if ((c === T.WHITE && T.rank_of(sq) > T.RANK_4) || (c === T.BLACK && T.rank_of(sq) < T.RANK_5)) {
+    attack = attack.or(shift(b, T.WEST)).or(shift(b, T.EAST));
+  }
+  return attack;
+}
+
+function pawn_attacks_to_bb(c, sq) {
+  let b = Bitboard.square(sq);
+  let attack = shift(b, c === T.WHITE ? T.SOUTH : T.NORTH);
+  if ((c === T.WHITE && T.rank_of(sq) > T.RANK_4) || (c === T.BLACK && T.rank_of(sq) < T.RANK_5)) {
+    attack = attack.or(shift(b, T.WEST)).or(shift(b, T.EAST));
+  }
+  return attack;
+}
+
+function line_bb(s1, s2) {
+  return LineBB[s1][s2];
+}
+
+function between_bb(s1, s2) {
+  return BetweenBB[s1][s2];
+}
+
+function aligned(s1, s2, s3) {
+  return line_bb(s1, s2).test(s3);
+}
+
+function distance(s1, s2) {
+  return SquareDistance[s1][s2];
+}
+
+function popcount(b) {
+  return b.popcount();
+}
+
+function lsb(b) {
+  return b.lsb();
+}
+
+function least_significant_square_bb(b) {
+  return square_bb(lsb(b));
+}
+
+function pop_lsb(b) {
+  return b.poplsb();
+}
+
+// ==============================================
+// Magic bitboards (simplified implementation)
+// ==============================================
+
+// We'll implement simpler attack generation for initial version
+const RookAttacks = new Array(T.SQUARE_NB);
+const CannonAttacks = new Array(T.SQUARE_NB);
+const BishopAttacks = new Array(T.SQUARE_NB);
+const KnightAttacks = new Array(T.SQUARE_NB);
+const KnightToAttacks = new Array(T.SQUARE_NB);
+
+function init_attacks() {
+  // Initialize KnightToAttacks first
+  for (let sq = 0; sq < T.SQUARE_NB; sq++) {
+    KnightToAttacks[sq] = new Bitboard();
+  }
+  
+  // Initialize attack tables for all pieces
+  for (let sq = 0; sq < T.SQUARE_NB; sq++) {
+    RookAttacks[sq] = new Bitboard();
+    CannonAttacks[sq] = new Bitboard();
+    BishopAttacks[sq] = new Bitboard();
+    KnightAttacks[sq] = new Bitboard();
+    
+    // Knight moves
+    const knightOffsets = [
+      T.NORTH + T.NORTH + T.WEST,
+      T.NORTH + T.NORTH + T.EAST,
+      T.SOUTH + T.SOUTH + T.WEST,
+      T.SOUTH + T.SOUTH + T.EAST,
+      T.WEST + T.WEST + T.NORTH,
+      T.WEST + T.WEST + T.SOUTH,
+      T.EAST + T.EAST + T.NORTH,
+      T.EAST + T.EAST + T.SOUTH
+    ];
+    
+    for (let offset of knightOffsets) {
+      let to = sq + offset;
+      if (T.is_ok(to) && SquareDistance[sq][to] === 2) {
+        KnightAttacks[sq].set(to);
+        // KnightToAttacks is the opposite - squares that can attack this square with knight
+        KnightToAttacks[to].set(sq);
+      }
+    }
+    
+    // Bishop (elephant) moves
+    const bishopOffsets = [
+      T.NORTH_EAST + T.NORTH_EAST,
+      T.NORTH_WEST + T.NORTH_WEST,
+      T.SOUTH_EAST + T.SOUTH_EAST,
+      T.SOUTH_WEST + T.SOUTH_WEST
+    ];
+    
+    for (let offset of bishopOffsets) {
+      let to = sq + offset;
+      if (T.is_ok(to)) {
+        let f = T.file_of(sq);
+        let r = T.rank_of(sq);
+        let tf = T.file_of(to);
+        let tr = T.rank_of(to);
+        
+        // Check if middle square is empty (for checking in later)
+        let midSq = sq + offset / 2;
+        // And check it's in own half
+        let halfOk = (T.color_of(T.WHITE) === T.WHITE && tr <= T.RANK_4) || 
+                     (T.color_of(T.WHITE) === T.BLACK && tr >= T.RANK_5);
+        // Actually, let's just set all possible moves and check legality later
+        BishopAttacks[sq].set(to);
+      }
+    }
+  }
+}
+
+function attacks_bb_sliding(sq, occupied, dirs) {
+  let attacks = new Bitboard();
+  for (let d of dirs) {
+    let s = sq + d;
+    while (T.is_ok(s)) {
+      attacks.set(s);
+      if (occupied.test(s)) break;
+      s += d;
+    }
+  }
+  return attacks;
+}
+
+function attacks_bb_rook(sq, occupied) {
+  return attacks_bb_sliding(sq, occupied, [T.NORTH, T.SOUTH, T.EAST, T.WEST]);
+}
+
+function attacks_bb_cannon(sq, occupied) {
+  let attacks = new Bitboard();
+  const dirs = [T.NORTH, T.SOUTH, T.EAST, T.WEST];
+  
+  for (let d of dirs) {
+    let s = sq + d;
+    let jumped = false;
+    while (T.is_ok(s)) {
+      if (!jumped) {
+        if (occupied.test(s)) {
+          jumped = true;
+        }
+      } else {
+        if (occupied.test(s)) {
+          attacks.set(s);
+          break;
+        }
+      }
+      s += d;
+    }
+  }
+  return attacks;
+}
+
+function attacks_bb(pt, sq, occupied) {
+  switch (pt) {
+    case T.ROOK: return attacks_bb_rook(sq, occupied);
+    case T.CANNON: return attacks_bb_cannon(sq, occupied);
+    case T.BISHOP: return BishopAttacks[sq];
+    case T.KNIGHT: return KnightAttacks[sq];
+    default: return new Bitboard();
+  }
+}
+
+// Initialize everything
+function init() {
+  init_attacks();
+  // Setup pawn attacks
+  for (let c = 0; c < T.COLOR_NB; c++) {
+    for (let sq = 0; sq < T.SQUARE_NB; sq++) {
+      PawnAttacks[c][sq] = pawn_attacks_bb(c, sq);
+      PawnAttacksTo[c][sq] = pawn_attacks_to_bb(c, sq);
+    }
+  }
+}
+
+function pretty(b) {
+  let s = "+---+---+---+---+---+---+---+---+---+\n";
+  for (let r = T.RANK_9; r >= T.RANK_0; r--) {
+    for (let f = T.FILE_A; f <= T.FILE_I; f++) {
+      let sq = T.make_square(f, r);
+      s += b.test(sq) ? "| X " : "|   ";
+    }
+    s += "| " + r + "\n+---+---+---+---+---+---+---+---+---+\n";
+  }
+  s += "  a   b   c   d   e   f   g   h   i\n";
+  return s;
+}
+
+module.exports = {
+  Bitboard,
+  Palace,
+  FileABB, FileBBB, FileCBB, FileDBB, FileEBB, FileFBB, FileGBB, FileHBB, FileIBB,
+  Rank0BB, Rank1BB, Rank2BB, Rank3BB, Rank4BB,
+  Rank5BB, Rank6BB, Rank7BB, Rank8BB, Rank9BB,
+  HalfBB, PawnBB,
+  PopCnt16, SquareDistance,
+  SquareBB, LineBB, BetweenBB,
+  PseudoAttacks, PawnAttacks, PawnAttacksTo,
+  square_bb, rank_bb, file_bb,
+  more_than_one, shift,
+  pawn_attacks_bb, pawn_attacks_to_bb,
+  line_bb, between_bb, aligned, distance,
+  popcount, lsb, least_significant_square_bb, pop_lsb,
+  attacks_bb, attacks_bb_rook, attacks_bb_cannon,
+  KnightAttacks, BishopAttacks,
+  init, pretty
+};
