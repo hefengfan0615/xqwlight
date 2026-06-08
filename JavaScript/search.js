@@ -1,446 +1,495 @@
 /*
-search.js - Source Code for XiangQi Wizard Light, Part II
-
-XiangQi Wizard Light - a Chinese Chess Program for JavaScript
-Designed by Morning Yellow, Version: 1.0, Last Modified: Sep. 2012
-Copyright (C) 2004-2012 www.xqbase.com
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation; either version 2 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+ * search.js - Pikafish 风格 Search 模块 - JavaScript 实现
+ *
+ * 参考 Pikafish 的 src/search.h / search.cpp:
+ *   - 迭代加深 (Iterative Deepening)
+ *   - Alpha-Beta + PVS (Principal Variation Search)
+ *   - Null Move Pruning (空着裁剪)
+ *   - LMR (Late Move Reduction)
+ *   - Transposition Table (置换表)
+ *   - PV 表 (Pikafish 的 PvTable)
+ *   - 杀手着法 (Killers)
+ *   - History Heuristic
+ *   - UCI 风格 info 输出 (depth, score, pv, knps, nps, time)
+ */
 
 "use strict";
 
-var SHELL_STEP = [0, 1, 4, 13, 40, 121, 364, 1093];
+// =============================================================================
+// 常量
+// =============================================================================
 
-function shellSort(mvs, vls) {
-  var stepLevel = 1;
-  while (SHELL_STEP[stepLevel] < mvs.length) {
-    stepLevel ++;
+const MATE_VALUE      = 30000;
+const MATE_IN_MAX_PLY = MATE_VALUE - 100;
+const WIN_VALUE       = 20000;
+const DRAW_VALUE      = 0;
+
+// 置换表
+const TT_NOBOUND  = 0;
+const TT_UPPER    = 1;  // alpha
+const TT_LOWER    = 2;  // beta
+const TT_EXACT    = 3;  // pv
+
+const MAX_PLY  = 64;
+const MAX_MOVES = 256;
+
+// =============================================================================
+// TT 入口
+// =============================================================================
+
+function TTEntry() {
+  this.key16 = 0;   // 16 位 zobrist 截断
+  this.depth = 0;
+  this.bound = TT_NOBOUND;
+  this.value = 0;
+  this.bestMove = 0;
+  this.age = 0;
+}
+
+// =============================================================================
+// SearchWorker
+// =============================================================================
+
+function SearchWorker() {
+  this.pos = new Position();
+  this.tt = new Array(1 << 18);  // 256K 入口
+  for (let i = 0; i < this.tt.length; i++) this.tt[i] = new TTEntry();
+  this.ttMask = this.tt.length - 1;
+  this.ttAge = 0;
+
+  // History: 14 * 90 (piece_type * square -> score)
+  this.history = new Int32Array(14 * 90);
+  // Counter moves
+  this.killers = new Array(MAX_PLY);
+  for (let i = 0; i < MAX_PLY; i++) this.killers[i] = [0, 0];
+
+  // PV
+  this.pv = new Array(MAX_PLY);
+  for (let i = 0; i < MAX_PLY; i++) this.pv[i] = new Int32Array(MAX_PLY);
+  this.pvLen = new Int32Array(MAX_PLY);
+
+  // 节点计数
+  this.nodes = 0n;  // 用 BigInt 防止溢出
+  this.startTime = 0;
+  this.stopTime  = 0;
+  this.stop      = false;
+  this.bestMove  = 0;
+  this.bestScore = -MATE_VALUE;
+  this.maxDepth  = 64;
+  this.timeLimit = Infinity;
+
+  // 搜索栈 (临时)
+  this.mvBuf = new Int32Array(MAX_MOVES);
+}
+
+// =============================================================================
+// TT 操作
+// =============================================================================
+
+SearchWorker.prototype.ttRead = function(key) {
+  // 用 16 位截断
+  const k16 = Number(key & 0xFFFFn);
+  const idx = Number(key & BigInt(this.ttMask));
+  const e = this.tt[idx];
+  if (e.key16 === k16) return e;
+  return null;
+};
+
+SearchWorker.prototype.ttWrite = function(key, depth, value, bound, bestMove) {
+  const k16 = Number(key & 0xFFFFn);
+  const idx = Number(key & BigInt(this.ttMask));
+  const e = this.tt[idx];
+  e.key16 = k16;
+  e.depth = depth;
+  e.value = value;
+  e.bound = bound;
+  e.bestMove = bestMove;
+  e.age = this.ttAge;
+};
+
+// =============================================================================
+// 内部搜索 (PVS + alpha-beta)
+// =============================================================================
+
+SearchWorker.prototype.qsearch = function(alpha, beta, ply) {
+  this.nodes++;
+  if (ply >= MAX_PLY) return this.pos.evaluate();
+
+  // TT probe
+  const key = this.pos.computeKey();
+  const tte = this.ttRead(key);
+  let ttMove = 0;
+  if (tte && tte.bound !== TT_NOBOUND) {
+    ttMove = tte.bestMove;
+    if (tte.bound === TT_EXACT) return tte.value;
+    if (tte.bound === TT_LOWER && tte.value >= beta) return tte.value;
+    if (tte.bound === TT_UPPER && tte.value <= alpha) return tte.value;
   }
-  stepLevel --;
-  while (stepLevel > 0) {
-    var step = SHELL_STEP[stepLevel];
-    for (var i = step; i < mvs.length; i ++) {
-      var mvBest = mvs[i];
-      var vlBest = vls[i];
-      var j = i - step;
-      while (j >= 0 && vlBest > vls[j]) {
-        mvs[j + step] = mvs[j];
-        vls[j + step] = vls[j];
-        j -= step;
+
+  // Stand pat
+  const standPat = this.pos.evaluate();
+  if (standPat >= beta) return standPat;
+  if (standPat > alpha) alpha = standPat;
+
+  // 生成吃子
+  const mp = new MovePicker(this.pos, ttMove, 0, [0, 0], null);
+  let best = standPat;
+  let bestMove = 0;
+  let mv;
+  while ((mv = mp.nextMoveQuiesc()) !== MOVE_NONE) {
+    // 合法性检查
+    if (!this.makeMoveLegal(mv)) continue;
+    this.pos.doMove(mv, null);
+    const score = -this.qsearch(-beta, -alpha, ply + 1);
+    this.pos.undoMove();
+    if (score > best) {
+      best = score;
+      bestMove = mv;
+      if (score > alpha) {
+        alpha = score;
+        if (score >= beta) break;
       }
-      mvs[j + step] = mvBest;
-      vls[j + step] = vlBest;
-    }
-    stepLevel --;
-  }
-}
-
-var PHASE_HASH = 0;
-var PHASE_KILLER_1 = 1;
-var PHASE_KILLER_2 = 2;
-var PHASE_GEN_MOVES = 3;
-var PHASE_REST = 4;
-
-function MoveSort(mvHash, pos, killerTable, historyTable) {
-  this.mvs = [];
-  this.vls = [];
-  this.mvHash = this.mvKiller1 = this.mvKiller2 = 0;
-  this.pos = pos;
-  this.historyTable = historyTable;
-  this.phase = PHASE_HASH;
-  this.index = 0;
-  this.singleReply = false;
-
-  if (pos.inCheck()) {
-    this.phase = PHASE_REST;
-    var mvsAll = pos.generateMoves(null);
-    for (var i = 0; i < mvsAll.length; i ++) {
-      var mv = mvsAll[i]
-      if (!pos.makeMove(mv)) {
-        continue;
-      }
-      pos.undoMakeMove();
-      this.mvs.push(mv);
-      this.vls.push(mv == mvHash ? 0x7fffffff :
-          historyTable[pos.historyIndex(mv)]);
-    }
-    shellSort(this.mvs, this.vls);
-    this.singleReply = this.mvs.length == 1;
-  } else {
-    this.mvHash = mvHash;
-    this.mvKiller1 = killerTable[pos.distance][0];
-    this.mvKiller2 = killerTable[pos.distance][1];
-  }
-}
-
-MoveSort.prototype.next = function() {
-  switch (this.phase) {
-  case PHASE_HASH:
-    this.phase = PHASE_KILLER_1;
-    if (this.mvHash > 0) {
-      return this.mvHash;
-    }
-    // No Break
-  case PHASE_KILLER_1:
-    this.phase = PHASE_KILLER_2;
-    if (this.mvKiller1 != this.mvHash && this.mvKiller1 > 0 &&
-        this.pos.legalMove(this.mvKiller1)) {
-      return this.mvKiller1;
-    }
-    // No Break
-  case PHASE_KILLER_2:
-    this.phase = PHASE_GEN_MOVES;
-    if (this.mvKiller2 != this.mvHash && this.mvKiller2 > 0 &&
-        this.pos.legalMove(this.mvKiller2)) {
-      return this.mvKiller2;
-    }
-    // No Break
-  case PHASE_GEN_MOVES:
-    this.phase = PHASE_REST;
-    this.mvs = this.pos.generateMoves(null);
-    this.vls = [];
-    for (var i = 0; i < this.mvs.length; i ++) {
-      this.vls.push(this.historyTable[this.pos.historyIndex(this.mvs[i])]);
-    }
-    shellSort(this.mvs, this.vls);
-    this.index = 0;
-    // No Break
-  default:
-    while (this.index < this.mvs.length) {
-      var mv = this.mvs[this.index];
-      this.index ++;
-      if (mv != this.mvHash && mv != this.mvKiller1 && mv != this.mvKiller2) {
-        return mv;
-      }
     }
   }
-  return 0;
-}
 
-var LIMIT_DEPTH = 64;
-var NULL_DEPTH = 2;
-var RANDOMNESS = 8;
+  if (best >= beta) this.ttWrite(key, 0, best, TT_LOWER, bestMove);
+  else if (best > standPat) this.ttWrite(key, 0, best, TT_EXACT, bestMove);
+  else this.ttWrite(key, 0, best, TT_UPPER, bestMove);
 
-var HASH_ALPHA = 1;
-var HASH_BETA = 2;
-var HASH_PV = 3;
+  return best;
+};
 
-function Search(pos, hashLevel) {
-  this.hashMask = (1 << hashLevel) - 1;
-  this.pos = pos;
-}
+SearchWorker.prototype.search = function(alpha, beta, depth, ply, doNull) {
+  this.nodes++;
+  if (this.stop) return 0;
 
-Search.prototype.getHashItem = function() {
-  return this.hashTable[this.pos.zobristKey & this.hashMask];
-}
+  if (ply >= MAX_PLY) return this.pos.evaluate();
 
-Search.prototype.probeHash = function(vlAlpha, vlBeta, depth, mv) {
-  var hash = this.getHashItem();
-  if (hash.zobristLock != this.pos.zobristLock) {
-    mv[0] = 0;
-    return -MATE_VALUE;
+  // Check time
+  if ((this.nodes & 1023n) === 0n && Date.now() > this.stopTime) {
+    this.stop = true;
+    return 0;
   }
-  mv[0] = hash.mv;
-  var mate = false;
-  if (hash.vl > WIN_VALUE) {
-    if (hash.vl <= BAN_VALUE) {
-      return -MATE_VALUE;
+
+  // Repetition check (简化: 跳过)
+  if (ply > 0) {
+    // alpha-beta mate distance pruning
+    alpha = Math.max(alpha, -MATE_VALUE + ply);
+    beta  = Math.min(beta,   MATE_VALUE - ply);
+    if (alpha >= beta) return alpha;
+  }
+
+  // TT probe
+  const key = this.pos.computeKey();
+  const tte = this.ttRead(key);
+  let ttMove = 0;
+  let ttValue = 0, ttBound = TT_NOBOUND;
+  if (tte) {
+    ttMove = tte.bestMove;
+    ttValue = tte.value;
+    ttBound = tte.bound;
+    if (tte.depth >= depth && ply > 0) {
+      if (tte.bound === TT_EXACT) return tte.value;
+      if (tte.bound === TT_LOWER && tte.value >= beta) return tte.value;
+      if (tte.bound === TT_UPPER && tte.value <= alpha) return tte.value;
     }
-    hash.vl -= this.pos.distance;
-    mate = true;
-  } else if (hash.vl < -WIN_VALUE) {
-    if (hash.vl >= -BAN_VALUE) {
-      return -MATE_VALUE;
-    }
-    hash.vl += this.pos.distance;
-    mate = true;
-  } else if (hash.vl == this.pos.drawValue()) {
-    return -MATE_VALUE;
   }
-  if (hash.depth < depth && !mate) {
-    return -MATE_VALUE;
-  }
-  if (hash.flag == HASH_BETA) {
-    return (hash.vl >= vlBeta ? hash.vl : -MATE_VALUE);
-  }
-  if (hash.flag == HASH_ALPHA) {
-    return (hash.vl <= vlAlpha ? hash.vl : -MATE_VALUE);
-  }
-  return hash.vl;
-}
 
-Search.prototype.recordHash = function(flag, vl, depth, mv) {
-  var hash = this.getHashItem();
-  if (hash.depth > depth) {
-    return;
-  }
-  hash.flag = flag;
-  hash.depth = depth;
-  if (vl > WIN_VALUE) {
-    if (mv == 0 && vl <= BAN_VALUE) {
-      return;
-    }
-    hash.vl = vl + this.pos.distance;
-  } else if (vl < -WIN_VALUE) {
-    if (mv == 0 && vl >= -BAN_VALUE) {
-      return;
-    }
-    hash.vl = vl - this.pos.distance;
-  } else if (vl == this.pos.drawValue() && mv == 0) {
-    return;
-  } else {
-    hash.vl = vl;
-  }
-  hash.mv = mv;
-  hash.zobristLock = this.pos.zobristLock;
-}
+  // 是否处于被将军状态
+  const inCheck = this.pos.inCheck();
 
-Search.prototype.setBestMove = function(mv, depth) {
-  this.historyTable[this.pos.historyIndex(mv)] += depth * depth;
-  var mvsKiller = this.killerTable[this.pos.distance];
-  if (mvsKiller[0] != mv) {
-    mvsKiller[1] = mvsKiller[0];
-    mvsKiller[0] = mv;
-  }
-}
+  // 到达叶节点 -> quiescence
+  if (depth <= 0) return this.qsearch(alpha, beta, ply);
 
-Search.prototype.searchQuiesc = function(vlAlpha_, vlBeta) {
-  var vlAlpha = vlAlpha_;
-  this.allNodes ++;
-  var vl = this.pos.mateValue();
-  if (vl >= vlBeta) {
-    return vl;
-  }
-  var vlRep = this.pos.repStatus(1);
-  if (vlRep > 0) {
-    return this.pos.repValue(vlRep);
-  }
-  if (this.pos.distance == LIMIT_DEPTH) {
+  // 静态 null move pruning
+  if (!inCheck && depth < 3 && this.pos.evaluate() - 200 * depth >= beta) {
     return this.pos.evaluate();
   }
-  var vlBest = -MATE_VALUE;
-  var mvs = [], vls = [];
-  if (this.pos.inCheck()) {
-    mvs = this.pos.generateMoves(null);
-    for (var i = 0; i < mvs.length; i ++) {
-      vls.push(this.historyTable[this.pos.historyIndex(mvs[i])]);
-    }
-    shellSort(mvs, vls);
-  } else {
-    vl = this.pos.evaluate();
-    if (vl > vlBest) {
-      if (vl >= vlBeta) {
-        return vl;
-      }
-      vlBest = vl;
-      vlAlpha = Math.max(vl, vlAlpha);
-    }
-    mvs = this.pos.generateMoves(vls);
-    shellSort(mvs, vls);
-    for (var i = 0; i < mvs.length; i ++) {
-      if (vls[i] < 10 || (vls[i] < 20 && HOME_HALF(DST(mvs[i]), this.pos.sdPlayer))) {
-        mvs.length = i;
-        break;
-      }
-    }
-  }
-  for (var i = 0; i < mvs.length; i ++) {
-    if (!this.pos.makeMove(mvs[i])) {
-      continue;
-    }
-    vl = -this.searchQuiesc(-vlBeta, -vlAlpha);
-    this.pos.undoMakeMove();
-    if (vl > vlBest) {
-      if (vl >= vlBeta) {
-        return vl;
-      }
-      vlBest = vl;
-      vlAlpha = Math.max(vl, vlAlpha);
-    }
-  }
-  return vlBest == -MATE_VALUE ? this.pos.mateValue() : vlBest;
-}
 
-Search.prototype.searchFull = function(vlAlpha_, vlBeta, depth, noNull) {
-  var vlAlpha = vlAlpha_;
-  if (depth <= 0) {
-    return this.searchQuiesc(vlAlpha, vlBeta);
-  }
-  this.allNodes ++;
-  var vl = this.pos.mateValue();
-  if (vl >= vlBeta) {
-    return vl;
-  }
-  var vlRep = this.pos.repStatus(1);
-  if (vlRep > 0) {
-    return this.pos.repValue(vlRep);
-  }
-  var mvHash = [0];
-  vl = this.probeHash(vlAlpha, vlBeta, depth, mvHash);
-  if (vl > -MATE_VALUE) {
-    return vl;
-  }
-  if (this.pos.distance == LIMIT_DEPTH) {
-    return this.pos.evaluate();
-  }
-  if (!noNull && !this.pos.inCheck() && this.pos.nullOkay()) {
-    this.pos.nullMove();
-    vl = -this.searchFull(-vlBeta, 1 - vlBeta, depth - NULL_DEPTH - 1, true);
+  // Null move pruning
+  if (doNull && !inCheck && depth >= 3) {
+    // 简化: 不做"非零大子"判断
+    this.pos.doNullMove(null);
+    const v = -this.search(-beta, -beta + 1, depth - 3, ply + 1, false);
     this.pos.undoNullMove();
-    if (vl >= vlBeta && (this.pos.nullSafe() ||
-        this.searchFull(vlAlpha, vlBeta, depth - NULL_DEPTH, true) >= vlBeta)) {
-      return vl;
-    }
+    if (this.stop) return 0;
+    if (v >= beta) return v;
   }
-  var hashFlag = HASH_ALPHA;
-  var vlBest = -MATE_VALUE;
-  var mvBest = 0;
-  var sort = new MoveSort(mvHash[0], this.pos, this.killerTable, this.historyTable);
-  var mv;
-  while ((mv = sort.next()) > 0) {
-    if (!this.pos.makeMove(mv)) {
-      continue;
-    }
-    var newDepth = this.pos.inCheck() || sort.singleReply ? depth : depth - 1;
-    if (vlBest == -MATE_VALUE) {
-      vl = -this.searchFull(-vlBeta, -vlAlpha, newDepth, false);
+
+  // 着法生成
+  const killers = this.killers[ply] || [0, 0];
+  const mp = new MovePicker(this.pos, ttMove, depth, killers, this.history);
+  let best = -MATE_VALUE;
+  let bestMove = 0;
+  let movesSearched = 0;
+  let bound = TT_UPPER;
+  let pvNode = (beta - alpha) > 1;
+  const alphaOrig = alpha;
+
+  let mv;
+  while ((mv = mp.nextMove()) !== MOVE_NONE) {
+    if (!this.makeMoveLegal(mv)) continue;
+    this.pos.doMove(mv, null);
+
+    let value;
+    const newDepth = depth - 1;
+
+    if (movesSearched === 0) {
+      // PV node first move: full window
+      value = -this.search(-beta, -alpha, newDepth, ply + 1, true);
     } else {
-      vl = -this.searchFull(-vlAlpha - 1, -vlAlpha, newDepth, false);
-      if (vl > vlAlpha && vl < vlBeta) {
-        vl = -this.searchFull(-vlBeta, -vlAlpha, newDepth, false);
+      // LMR: 后续走子降低深度
+      let reduction = 0;
+      if (!inCheck && !this.pos.inCheck() && depth >= 3 && !mp.isCapture(mv) && mv !== killers[0] && mv !== killers[1]) {
+        reduction = (movesSearched > 2) ? 1 : 0;
+        if (depth >= 6 && movesSearched > 6) reduction = 2;
       }
-    }
-    this.pos.undoMakeMove();
-    if (vl > vlBest) {
-      vlBest = vl;
-      if (vl >= vlBeta) {
-        hashFlag = HASH_BETA;
-        mvBest = mv;
-        break;
-      }
-      if (vl > vlAlpha) {
-        vlAlpha = vl;
-        hashFlag = HASH_PV;
-        mvBest = mv;
-      }
-    }
-  }
-  if (vlBest == -MATE_VALUE) {
-    return this.pos.mateValue();
-  }
-  this.recordHash(hashFlag, vlBest, depth, mvBest);
-  if (mvBest > 0) {
-    this.setBestMove(mvBest, depth);
-  }
-  return vlBest;
-}
 
-Search.prototype.searchRoot = function(depth) {
-  var vlBest = -MATE_VALUE;
-  var sort = new MoveSort(this.mvResult, this.pos, this.killerTable, this.historyTable);
-  var mv;
-  while ((mv = sort.next()) > 0) {
-    if (!this.pos.makeMove(mv)) {
-      continue;
+      // Zero window
+      value = -this.search(-alpha - 1, -alpha, newDepth - reduction, ply + 1, true);
+      if (this.stop) { this.pos.undoMove(); return 0; }
+      if (value > alpha && (reduction > 0 || value < beta)) {
+        // Re-search full window
+        value = -this.search(-beta, -alpha, newDepth, ply + 1, true);
+      }
     }
-    var newDepth = this.pos.inCheck() ? depth : depth - 1;
-    var vl;
-    if (vlBest == -MATE_VALUE) {
-      vl = -this.searchFull(-MATE_VALUE, MATE_VALUE, newDepth, true);
+
+    this.pos.undoMove();
+    if (this.stop) return 0;
+
+    if (value > best) {
+      best = value;
+      bestMove = mv;
+      if (value > alpha) {
+        alpha = value;
+        bound = TT_EXACT;
+        // PV update
+        this.pv[ply][ply] = mv;
+        for (let i = ply + 1; i < this.pvLen[ply + 1]; i++) {
+          this.pv[ply][i] = this.pv[ply + 1][i];
+        }
+        this.pvLen[ply] = this.pvLen[ply + 1] + 1;
+
+        if (value >= beta) {
+          bound = TT_LOWER;
+          // Killer / history
+          const from = moveFrom(mv);
+          const to = moveTo(mv);
+          const pc = this.pos.pieceOn[from];
+          if (pc >= 0 && this.pos.pieceOn[to] < 0) {
+            // Quiet move causing cutoff
+            if (this.killers[ply][0] !== mv) {
+              this.killers[ply][1] = this.killers[ply][0];
+              this.killers[ply][0] = mv;
+            }
+            const pt = PIECE_TYPE[pc];
+            this.history[pt * 90 + to] += depth * depth;
+          }
+          break;
+        }
+      }
+    }
+    movesSearched++;
+  }
+
+  if (movesSearched === 0) {
+    // 无棋可走: 将军或者逼和
+    if (inCheck) return -MATE_VALUE + ply;
+    return 0;
+  }
+
+  this.ttWrite(key, depth, best, bound, bestMove);
+  return best;
+};
+
+// 合法性检查: 模拟走子后是否送将
+SearchWorker.prototype.makeMoveLegal = function(mv) {
+  const from = moveFrom(mv), to = moveTo(mv);
+  const pc = this.pos.pieceOn[from];
+  if (pc < 0) return false;
+  if (COLOR_OF[pc] !== this.pos.side) return false;
+  const captured = this.pos.pieceOn[to];
+  const color = COLOR_OF[pc];
+
+  // 应用 (简化: 直接复制 Position 的代码)
+  this.pos.byPieceBB[pc] &= ~bbOf(from);
+  this.pos.byPieceBB[pc] |=  bbOf(to);
+  this.pos.pieceOn[from] = -1;
+  this.pos.pieceOn[to]   = pc;
+  if (captured >= 0) this.pos.byPieceBB[captured] &= ~bbOf(to);
+  if (color === RED) {
+    this.pos.occRed &= ~bbOf(from); this.pos.occRed |= bbOf(to);
+    if (captured >= 0) this.pos.occBlk &= ~bbOf(to);
+  } else {
+    this.pos.occBlk &= ~bbOf(from); this.pos.occBlk |= bbOf(to);
+    if (captured >= 0) this.pos.occRed &= ~bbOf(to);
+  }
+  this.pos.occ = this.pos.occRed | this.pos.occBlk;
+  if (pc === R_KING) this.pos.kingRed = to;
+  if (pc === B_KING) this.pos.kingBlk = to;
+
+  const myKing = color === RED ? this.pos.kingRed : this.pos.kingBlk;
+  const inCheck = this.pos.isSquareAttacked(myKing, 1 - color);
+
+  // 撤销
+  this.pos.byPieceBB[pc] &= ~bbOf(to);
+  this.pos.byPieceBB[pc] |=  bbOf(from);
+  this.pos.pieceOn[from] = pc;
+  this.pos.pieceOn[to]   = captured;
+  if (captured >= 0) this.pos.byPieceBB[captured] |= bbOf(to);
+  if (color === RED) {
+    this.pos.occRed &= ~bbOf(to); this.pos.occRed |= bbOf(from);
+    if (captured >= 0) this.pos.occBlk |= bbOf(to);
+  } else {
+    this.pos.occBlk &= ~bbOf(to); this.pos.occBlk |= bbOf(from);
+    if (captured >= 0) this.pos.occRed |= bbOf(to);
+  }
+  this.pos.occ = this.pos.occRed | this.pos.occBlk;
+  if (pc === R_KING) this.pos.kingRed = from;
+  if (pc === B_KING) this.pos.kingBlk = from;
+
+  return !inCheck;
+};
+
+// =============================================================================
+// 根搜索 (iterative deepening)
+// =============================================================================
+
+SearchWorker.prototype.searchRoot = function() {
+  // 顶层: 走所有合法着法
+  const start = Date.now();
+  this.startTime = start;
+  this.stopTime  = start + this.timeLimit;
+  this.stop      = false;
+  this.nodes     = 0n;
+  this.ttAge     = (this.ttAge + 1) & 0xFFFF;
+  this.bestMove  = 0;
+  this.bestScore = -MATE_VALUE;
+
+  // 生成所有着法
+  const mvs = new Int32Array(256);
+  const n = this.pos.generateLegalMoves(mvs);
+  if (n === 0) {
+    return 0;  // 无合法着法
+  }
+
+  // 评分
+  for (let i = 0; i < n; i++) {
+    const mv = mvs[i];
+    const to = moveTo(mv);
+    const from = moveFrom(mv);
+    const victim = this.pos.pieceOn[to];
+    const attacker = this.pos.pieceOn[from];
+    // 简单: MVV-LVA
+    if (victim >= 0) {
+      mvs[i] = mv | ((10000 + MVV_VALUE[victim] - LVA_VALUE[attacker]) << 16);
     } else {
-      vl = -this.searchFull(-vlBest - 1, -vlBest, newDepth, false);
-      if (vl > vlBest) {
-        vl = -this.searchFull(-MATE_VALUE, -vlBest, newDepth, true);
+      mvs[i] = mv | (0 << 16);
+    }
+  }
+
+  // 按 score 排序 (高 -> 低)
+  mvs.sort((a, b) => (b >>> 16) - (a >>> 16));
+
+  let alpha = -MATE_VALUE;
+  let beta  = MATE_VALUE;
+  let bestMv = 0;
+  let bestSc = -MATE_VALUE;
+
+  // 迭代加深
+  let completedDepth = 0;
+  for (let depth = 1; depth <= this.maxDepth; depth++) {
+    if (this.stop) break;
+
+    // 重新初始化
+    for (let i = 0; i < MAX_PLY; i++) this.pvLen[i] = 0;
+
+    let curBest = 0;
+    let curScore = -MATE_VALUE;
+    let curBound = TT_UPPER;
+    let firstLegal = -1;
+    for (let i = 0; i < n; i++) {
+      const mv = mvs[i] & 0xFFFF;
+      if (mv === 0) continue;
+      if (!this.makeMoveLegal(mv)) { mvs[i] = 0; continue; }
+      if (firstLegal < 0) firstLegal = mv;
+
+      this.pos.doMove(mv, null);
+      let sc;
+      if (i === 0 || curScore === -MATE_VALUE) {
+        sc = -this.search(-beta, -alpha, depth - 1, 1, true);
+      } else {
+        // PVS
+        sc = -this.search(-alpha - 1, -alpha, depth - 1, 1, true);
+        if (sc > alpha && sc < beta) {
+          sc = -this.search(-beta, -alpha, depth - 1, 1, true);
+        }
+      }
+      this.pos.undoMove();
+
+      if (this.stop) break;
+
+      if (sc > curScore) {
+        curScore = sc;
+        curBest = mv;
+        curBound = TT_EXACT;
+        alpha = sc;
+        // PV
+        this.pv[0][0] = mv;
+        for (let p = 1; p < this.pvLen[1]; p++) this.pv[0][p] = this.pv[1][p];
+        this.pvLen[0] = this.pvLen[1] + 1;
       }
     }
-    this.pos.undoMakeMove();
-    if (vl > vlBest) {
-      vlBest = vl;
-      this.mvResult = mv;
-      if (vlBest > -WIN_VALUE && vlBest < WIN_VALUE) {
-        vlBest += Math.floor(Math.random() * RANDOMNESS) -
-            Math.floor(Math.random() * RANDOMNESS);
-        vlBest = (vlBest == this.pos.drawValue() ? vlBest - 1 : vlBest);
-      }
-    }
-  }
-  this.setBestMove(this.mvResult, depth);
-  return vlBest;
-}
 
-Search.prototype.searchUnique = function(vlBeta, depth) {
-  var sort = new MoveSort(this.mvResult, this.pos, this.killerTable, this.historyTable);
-  sort.next();
-  var mv;
-  while ((mv = sort.next()) > 0) {
-    if (!this.pos.makeMove(mv)) {
-      continue;
-    }
-    var vl = -this.searchFull(-vlBeta, 1 - vlBeta,
-        this.pos.inCheck() ? depth : depth - 1, false);
-    this.pos.undoMakeMove();
-    if (vl >= vlBeta) {
-      return false;
-    }
-  }
-  return true;
-}
+    if (this.stop) break;
 
-Search.prototype.searchMain = function(depth, millis) {
-  this.mvResult = this.pos.bookMove();
-  if (this.mvResult > 0) {
-    this.pos.makeMove(this.mvResult);
-    if (this.pos.repStatus(3) == 0) {
-      this.pos.undoMakeMove();
-      return this.mvResult;
+    if (curBest > 0) {
+      bestMv = curBest;
+      bestSc = curScore;
     }
-    this.pos.undoMakeMove();
-  }
-  this.hashTable = [];
-  for (var i = 0; i <= this.hashMask; i ++) {
-    this.hashTable.push({depth: 0, flag: 0, vl: 0, mv: 0, zobristLock: 0});
-  }
-  this.killerTable = [];
-  for (var i = 0; i < LIMIT_DEPTH; i ++) {
-    this.killerTable.push([0, 0]);
-  }
-  this.historyTable = [];
-  for (var i = 0; i < 4096; i ++) {
-    this.historyTable.push(0);
-  }
-  this.mvResult = 0;
-  this.allNodes = 0;
-  this.pos.distance = 0;
-  var t = new Date().getTime();
-  for (var i = 1; i <= depth; i ++) {
-    var vl = this.searchRoot(i);
-    this.allMillis = new Date().getTime() - t;
-    if (this.allMillis > millis) {
-      break;
-    }
-    if (vl > WIN_VALUE || vl < -WIN_VALUE) {
-      break;
-    }
-    if (this.searchUnique(1 - WIN_VALUE, i)) {
-      break;
-    }
-  }
-  return this.mvResult;
-}
 
-Search.prototype.getKNPS = function() {
-  return this.allNodes / this.allMillis;
-}
+    // 更新全局最佳
+    this.bestMove = bestMv;
+    this.bestScore = bestSc;
+    completedDepth = depth;
+
+    // 输出 info (UCI 风格)
+    this.outputInfo(depth, bestSc, bestMv, this.pvLen[0]);
+
+    // Mate distance
+    if (bestSc > WIN_VALUE || bestSc < -WIN_VALUE) break;
+
+    // 时间检查
+    const elapsed = Date.now() - this.startTime;
+    if (elapsed > this.timeLimit / 2) break;
+  }
+
+  this.bestMove = bestMv;
+  this.bestScore = bestSc;
+  return bestMv;
+};
+
+// =============================================================================
+// 输出 (Pikafish 风格的 UCI info 格式)
+// =============================================================================
+
+SearchWorker.prototype.outputInfo = function(depth, score, bestMv, pvLen) {
+  if (typeof onSearchInfo === 'function') {
+    const elapsed = Math.max(1, Date.now() - this.startTime);
+    const knps = (Number(this.nodes) / elapsed) | 0;
+    const pvArr = [];
+    for (let i = 0; i < Math.min(pvLen, 12); i++) pvArr.push(this.pv[0][i]);
+    onSearchInfo({
+      depth: depth,
+      score: score,
+      pv: pvArr,
+      nodes: Number(this.nodes),
+      time: elapsed,
+      knps: knps
+    });
+  }
+};
+
+window.SearchWorker = SearchWorker;
+window.MATE_VALUE = MATE_VALUE;
+window.WIN_VALUE = WIN_VALUE;

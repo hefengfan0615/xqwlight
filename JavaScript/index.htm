@@ -1,167 +1,382 @@
-<html>
-  <head>
-    <meta http-equiv="Content-Type" content="text/html; charset=gbk">
-    <title>����С��ʦ</title>
-    <script type="text/javascript" src="book.js"></script>
-    <script type="text/javascript" src="position.js"></script>
-    <script type="text/javascript" src="search.js"></script>
-    <script type="text/javascript" src="board.js"></script>
-    <script type="text/javascript" src="cchess.js"></script>
-    <style type="text/css"><!--
-body {
-  background: url(../background.gif);
-}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pikafish JS 象棋引擎 - 在线演示</title>
+  <script type="text/javascript" src="bitboard.js"></script>
+  <script type="text/javascript" src="position.js"></script>
+  <script type="text/javascript" src="movepick.js"></script>
+  <script type="text/javascript" src="search.js"></script>
+  <script type="text/javascript" src="cchess.js"></script>
+  <script type="text/javascript" src="board.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: linear-gradient(135deg, #f5e6c4 0%, #e0c896 100%);
+      min-height: 100vh;
+      color: #2c1810;
+    }
 
-span.td {
-  display: inline-block;
-}
+    .page {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 20px;
+    }
 
-div.label {
-  font-size: 14px;
-  padding:2px;
-}
+    h1 {
+      text-align: center;
+      color: #5b1a0f;
+      font-weight: 800;
+      letter-spacing: 2px;
+      font-size: 32px;
+      margin: 0 0 4px 0;
+      text-shadow: 1px 1px 0 #fff;
+    }
 
-select {
-  font-size: 14px;
-  width: 108px;
-  padding:2px;
-}
+    .subtitle {
+      text-align: center;
+      color: #7a4a2a;
+      margin: 0 0 16px 0;
+      font-size: 14px;
+      font-style: italic;
+    }
 
-option {
-  font-size: 14px;
-}
+    .layout {
+      display: flex;
+      gap: 24px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
 
-input.button {
-  font-size: 14px;
-  width: 108px;
-}
+    #container {
+      flex-shrink: 0;
+    }
 
-label {
-  font-size: 14px;
-}
+    .panel {
+      flex: 1;
+      min-width: 240px;
+      background: #fff8ec;
+      border: 2px solid #b88247;
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 4px 12px rgba(91, 26, 15, 0.2);
+    }
 
-    --></style>
-  </head>
-  <body>
-    <div style="text-align:center;font-size:28px;font-family:����">����С��ʦ</div>
-    <div style="height:16px"></div>
-    <div style="text-align:center;white-space:nowrap">
-      <span class="td" style="margin-right:10px">
-        <div id="container"></div>
-      </span><span class="td" style="vertical-align:top;width:120px;"><div style="text-align:left">
-        <div class="label">˭����</div>
-        <div><select id="selMoveMode" size="3">
-          <option selected value="0">������</option>
-          <option value="1">��������</option>
-          <option value="2">���õ���</option>
-        </select></div>
-        <div class="label">��������</div>
-        <div><select id="selHandicap" style="padding:0px">
-          <option selected value="0">������</option>
-          <option value="1">������</option>
-          <option value="2">��˫��</option>
-          <option value="3">�þ���</option>
-        </select></div>
-        <div style="padding-top:2px"><input type="button" class="button" value="���¿�ʼ" onclick="restart_click()"></div>
-        <div style="padding-top:2px"><input type="button" class="button" value="����" onclick="retract_click()"></div>
-        <div style="height:12px"></div>
-        <div class="label">����ˮƽ</div>
-        <div><select id="selLevel" size="3" onchange="level_change()">
-          <option selected value="0">����</option>
-          <option value="1">ҵ��</option>
-          <option value="2">רҵ</option>
-        </select></div>
-        <div style="height:12px"></div>
-        <div><input type="checkbox" class="checkbox" id="chkAnimated" checked onclick="board.animated = checked"><label for="chkAnimated">����</label></input></div>
-        <div><input type="checkbox" class="checkbox" checked onclick="board.setSound(checked)"><label for="chkSound">��Ч</label></input></div>
-        <div style="height:60px"></div>
-        <div class="label">����</div>
-        <div><select id="selMoveList" size="10" style="font-family:����" onchange="moveList_change()">
-          <option selected value="0">=== ��ʼ ===</option>
-        </select></div>
-      </div></span>
+    .panel h2 {
+      margin: 0 0 12px 0;
+      font-size: 18px;
+      color: #5b1a0f;
+      border-bottom: 1px solid #d4a373;
+      padding-bottom: 6px;
+    }
+
+    .form-row {
+      display: flex;
+      align-items: center;
+      margin-bottom: 8px;
+      gap: 8px;
+    }
+
+    .form-row label {
+      flex: 0 0 90px;
+      font-size: 14px;
+      color: #5b1a0f;
+    }
+
+    select, input[type="button"], input[type="checkbox"] + label {
+      font-size: 14px;
+    }
+
+    select {
+      flex: 1;
+      padding: 4px;
+      border: 1px solid #b88247;
+      border-radius: 4px;
+      background: #fff;
+    }
+
+    input[type="button"] {
+      width: 100%;
+      padding: 8px;
+      margin-top: 4px;
+      background: #b88247;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 14px;
+      transition: background 0.15s;
+    }
+
+    input[type="button"]:hover {
+      background: #8a5a30;
+    }
+
+    input[type="button"]:active {
+      background: #5b1a0f;
+    }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 6px 0;
+    }
+
+    .move-list {
+      width: 100%;
+      max-height: 280px;
+      overflow-y: auto;
+      border: 1px solid #b88247;
+      background: white;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 13px;
+    }
+
+    .move-list option {
+      padding: 2px 4px;
+    }
+
+    .search-info {
+      margin-top: 16px;
+      background: #1a1a1a;
+      color: #00ff7f;
+      border-radius: 6px;
+      padding: 12px;
+      font-family: "Menlo", "Consolas", monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      min-height: 60px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .search-info .label {
+      color: #ffa500;
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 24px;
+      font-size: 12px;
+      color: #7a4a2a;
+    }
+
+    .footer a {
+      color: #5b1a0f;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>♟ Pikafish JS 象棋引擎 ♛</h1>
+    <p class="subtitle">基于 <a href="https://github.com/official-pikafish/Pikafish" target="_blank">Pikafish</a> 算法架构的 JavaScript 实现 — bitboard / movepick / position / search</p>
+
+    <div class="layout">
+      <div id="container"></div>
+
+      <div class="panel">
+        <h2>游戏设置</h2>
+        <div class="form-row">
+          <label>谁先走:</label>
+          <select id="selMoveMode" size="1">
+            <option selected value="0">我(红)先走</option>
+            <option value="1">电脑(黑)先走</option>
+            <option value="2">人人对战</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>引擎级别:</label>
+          <select id="selLevel" size="1">
+            <option value="0">入门 (0.1 秒)</option>
+            <option value="1">业余 (1 秒)</option>
+            <option selected value="2">专业 (5 秒)</option>
+            <option value="3">大师 (15 秒)</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>初始局面:</label>
+          <select id="selFen" size="1">
+            <option value="start" selected>标准开局</option>
+            <option value="midgame">中局例局</option>
+            <option value="endgame">残局例局</option>
+          </select>
+        </div>
+        <div style="margin-top: 12px">
+          <input type="button" value="新对局" onclick="restart_click()">
+        </div>
+        <div style="margin-top: 4px">
+          <input type="button" value="悔棋" onclick="retract_click()">
+        </div>
+
+        <h2 style="margin-top:18px">走子记录</h2>
+        <select id="selMoveList" class="move-list" size="12" onchange="moveList_change()">
+          <option selected value="-1">=== 开始 ===</option>
+        </select>
+      </div>
     </div>
-    <script type="text/javascript"><!--
-"use strict";
 
-var STARTUP_FEN = [
-  "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w",
-  "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKAB1R w",
-  "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/R1BAKAB1R w",
-  "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/9/1C5C1/9/RN2K2NR w",
-];
+    <div class="search-info" id="searchInfo">
+<span class="label">⏳ 等待开始...</span>
+引擎: Pikafish JS v1.0
+模块: bitboard.js | position.js | movepick.js | search.js
+    </div>
 
-function createOption(text, value, ie8) {
-  var opt = document.createElement("option");
-  opt.selected = true;
-  opt.value = value;
-  if (ie8) {
-    opt.text = text;
-  } else {
-    opt.innerHTML = text.replace(/ /g, "&nbsp;");
-  }
-  return opt;
-}
+    <div class="footer">
+      <p>本项目复刻 <a href="https://github.com/official-pikafish/Pikafish" target="_blank">Pikafish</a> 的核心算法模块,使用 JavaScript 重新实现
+        位棋盘 (bitboard)、着法选择器 (movepick)、棋盘表示 (position) 和 α-β 搜索 (search)。</p>
+    </div>
+  </div>
 
-var board = new Board(container, "images/", "sounds/");
-board.setSearch(16);
-board.millis = 10;
-board.computer = 1;
-board.onAddMove = function() {
-  var counter = (board.pos.mvList.length >> 1);
-  var space = (counter > 99 ? "    " : "   ");
-  counter = (counter > 9 ? "" : " ") + counter + ".";
-  var text = (board.pos.sdPlayer == 0 ? space : counter) + move2Iccs(board.mvLast);
-  var value = "" + board.mvLast;
-  try {
-    selMoveList.add(createOption(text, value, false));
-  } catch (e) {
-    selMoveList.add(createOption(text, value, true));
-  }
-  selMoveList.scrollTop = selMoveList.scrollHeight;
-};
+  <script type="text/javascript">
+    "use strict";
 
-function level_change() {
-  board.millis = Math.pow(10, selLevel.selectedIndex + 1);
-}
+    // ===================================================================
+    // 全局
+    // ===================================================================
 
-function restart_click() {
-  selMoveList.options.length = 1;
-  selMoveList.selectedIndex = 0;
-  board.computer = 1 - selMoveMode.selectedIndex;
-  board.restart(STARTUP_FEN[selHandicap.selectedIndex]);
-}
+    const STARTUP_FEN = {
+      "start":
+        "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1",
+      "midgame":
+        "2bak4/9/R3Pa3/2p6/2n3p2/4r4/9/4C4/4A4/3K5 b - - 0 30",
+      "endgame":
+        "4k4/4a4/9/9/9/9/9/9/4p4/3K5 w - - 0 60"
+    };
 
-function retract_click() {
-  for (var i = board.pos.mvList.length; i < selMoveList.options.length; i ++) {
-    board.pos.makeMove(parseInt(selMoveList.options[i].value));
-  }
-  board.retract();
-  selMoveList.options.length = board.pos.mvList.length;
-  selMoveList.selectedIndex = selMoveList.options.length - 1;
-}
+    const TIME_TABLE = [100, 1000, 5000, 15000];
 
-function moveList_change() {
-  if (board.result == RESULT_UNKNOWN) {
-    selMoveList.selectedIndex = selMoveList.options.length - 1;
-    return;
-  }
-  var from = board.pos.mvList.length;
-  var to = selMoveList.selectedIndex;
-  if (from == to + 1) {
-    return;
-  }
-  if (from > to + 1) {
-    for (var i = to + 1; i < from; i ++) {
-      board.pos.undoMakeMove();
+    var board;
+
+    function createOption(text, value) {
+      var opt = document.createElement("option");
+      opt.value = value;
+      opt.innerHTML = text;
+      return opt;
     }
-  } else {
-    for (var i = from; i <= to; i ++) {
-      board.pos.makeMove(parseInt(selMoveList.options[i].value));
+
+    // ===================================================================
+    // 搜索信息显示
+    // ===================================================================
+
+    // 覆盖默认的 onSearchInfo, 使用我们的 div
+    window.onSearchInfo = function(info) {
+      if (!board) return;
+      const el = document.getElementById("searchInfo");
+      if (!el) return;
+
+      // 评分 (从走子方视角) -> 转红方视角
+      let scoreCp = info.score;
+      // 因为搜索者就是当前走子方, score 对走子方为正.
+      // 转为红方视角
+      if (board.pos.side === BLACK) scoreCp = -scoreCp;
+
+      let scoreStr;
+      if (Math.abs(info.score) > 29000) {
+        const mateIn = MATE_VALUE - Math.abs(info.score);
+        scoreStr = (info.score > 0 ? "+" : "-") + "M" + mateIn;
+      } else {
+        scoreStr = (scoreCp > 0 ? "+" : "") + scoreCp + " cp";
+      }
+
+      // PV -> ICCS
+      const pvStr = info.pv.map(function(mv) {
+        return moveToIccs(mv, board.flipped);
+      }).join(" ");
+
+      // 渲染多行 UCI 风格输出
+      const line = "<span class=\"label\">info</span> depth " + info.depth
+        + "  score " + scoreStr
+        + "  nodes " + info.nodes
+        + "  nps " + (info.knps * 1000)
+        + "  time " + info.time + "ms"
+        + "\n<span class=\"label\">pv</span>   " + pvStr;
+      el.innerHTML = line;
+    };
+
+    // ===================================================================
+    // 控件事件
+    // ===================================================================
+
+    function level_change() {
+      if (!board) return;
+      board.millis = TIME_TABLE[selLevel.selectedIndex] || 1000;
+      if (board.worker) board.worker.timeLimit = board.millis;
     }
-  }
-  board.flushBoard();
-}
-    --></script>
-  </body>
+
+    function restart_click() {
+      const sel = document.getElementById("selMoveMode");
+      const computerSide = sel.selectedIndex === 0 ? BLACK
+                         : sel.selectedIndex === 1 ? RED
+                         : -1;
+      const fen = STARTUP_FEN[selFen.value] || STARTUP_FEN["start"];
+      // 清空走子记录
+      const selMoveList = document.getElementById("selMoveList");
+      selMoveList.options.length = 1;
+      selMoveList.selectedIndex = 0;
+      // 启动
+      board.start(computerSide, fen);
+    }
+
+    function retract_click() {
+      if (!board) return;
+      board.retract();
+      // 更新走子记录
+      const selMoveList = document.getElementById("selMoveList");
+      selMoveList.options.length = 1;
+      for (let i = 0; i < board.mvList.length; i++) {
+        const counter = ((i >> 1) + 1);
+        const space = (counter > 99 ? "    " : (counter > 9 ? "   " : "    "));
+        const numStr = (counter < 10 ? " " : "") + counter + ".";
+        const sdFirst = (i % 2 === 0) === (board.pos.side === RED);
+        const text = (i % 2 === 0 ? numStr : space) + moveToIccs(board.mvList[i], board.flipped);
+        selMoveList.add(createOption(text, i));
+      }
+      selMoveList.selectedIndex = selMoveList.options.length - 1;
+    }
+
+    function moveList_change() {
+      // (暂不实现)
+    }
+
+    // ===================================================================
+    // 启动
+    // ===================================================================
+
+    window.addEventListener("load", function() {
+      // 创建棋盘
+      const container = document.getElementById("container");
+      board = new Board(container, {});
+      window._board = board;
+
+      // 关联事件
+      document.getElementById("selLevel").addEventListener("change", level_change);
+
+      // 走子记录回调
+      board.onAddMove = function() {
+        const selMoveList = document.getElementById("selMoveList");
+        const i = board.mvList.length - 1;
+        const counter = ((i >> 1) + 1);
+        const space = (counter > 99 ? "    " : (counter > 9 ? "   " : "    "));
+        const numStr = (counter < 10 ? " " : "") + counter + ".";
+        // 玩家走子方?
+        const playerSide = (board.computer === -1) ? -1 : (1 - board.computer);
+        const isPlayerMove = (board.pos.side === playerSide);
+        // 走子记录简化: 不严格判断
+        const text = (i % 2 === 0 ? numStr : space) + moveToIccs(board.mvLast, board.flipped);
+        selMoveList.add(createOption(text, i));
+        selMoveList.scrollTop = selMoveList.scrollHeight;
+      };
+
+      // 启动第一局
+      level_change();
+      restart_click();
+    });
+  </script>
+</body>
 </html>

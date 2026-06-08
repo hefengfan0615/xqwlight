@@ -1,400 +1,396 @@
 /*
-board.js - Source Code for XiangQi Wizard Light, Part IV
-
-XiangQi Wizard Light - a Chinese Chess Program for JavaScript
-Designed by Morning Yellow, Version: 1.0, Last Modified: Sep. 2012
-Copyright (C) 2004-2012 www.xqbase.com
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation; either version 2 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+ * board.js - 棋盘 UI 控制 (Pikafish 引擎前端)
+ *
+ * 适配新的 Position API (0-89 位棋盘)
+ * 在底部显示 Pikafish 风格搜索信息 (depth, score, pv, knps)
+ */
 
 "use strict";
 
-var RESULT_UNKNOWN = 0;
-var RESULT_WIN = 1;
-var RESULT_DRAW = 2;
-var RESULT_LOSS = 3;
+const RESULT_UNKNOWN = 0;
+const RESULT_WIN     = 1;
+const RESULT_DRAW    = 2;
+const RESULT_LOSS    = 3;
 
-var BOARD_WIDTH = 521;
-var BOARD_HEIGHT = 577;
-var SQUARE_SIZE = 57;
-var SQUARE_LEFT = (BOARD_WIDTH - SQUARE_SIZE * 9) >> 1;
-var SQUARE_TOP = (BOARD_HEIGHT - SQUARE_SIZE * 10) >> 1;
-var THINKING_SIZE = 32;
-var THINKING_LEFT = (BOARD_WIDTH - THINKING_SIZE) >> 1;
-var THINKING_TOP = (BOARD_HEIGHT - THINKING_SIZE) >> 1;
-var MAX_STEP = 8;
-var PIECE_NAME = [
-  "oo", null, null, null, null, null, null, null,
-  "rk", "ra", "rb", "rn", "rr", "rc", "rp", null,
-  "bk", "ba", "bb", "bn", "br", "bc", "bp", null,
-];
+const THINKING_SIZE  = 32;
 
-function SQ_X(sq) {
-  return SQUARE_LEFT + (FILE_X(sq) - 3) * SQUARE_SIZE;
-}
+// =============================================================================
+// Board
+// =============================================================================
 
-function SQ_Y(sq) {
-  return SQUARE_TOP + (RANK_Y(sq) - 3) * SQUARE_SIZE;
-}
-
-function MOVE_PX(src, dst, step) {
-  return Math.floor((src * step + dst * (MAX_STEP - step)) / MAX_STEP + .5) + "px";
-}
-
-function alertDelay(message) {
-  setTimeout(function() {
-    alert(message);
-  }, 250);
-}
-
-function Board(container, images, sounds) {
-  this.images = images;
-  this.sounds = sounds;
+function Board(container, opts) {
+  this.container = container;
   this.pos = new Position();
-  this.pos.fromFen("rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1");
+  this.pos.setFen("rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1");
   this.animated = true;
-  this.sound = true;
+  this.sound = false;
   this.search = null;
-  this.imgSquares = [];
-  this.sqSelected = 0;
+  this.sqSelected = -1;
   this.mvLast = 0;
-  this.millis = 0;
-  this.computer = -1;
+  this.millis = 1000;  // 默认思考 1 秒
+  this.computer = -1;   // -1=人, 0=红=电脑, 1=黑=电脑
   this.result = RESULT_UNKNOWN;
   this.busy = false;
+  this.flipped = false;
 
-  var style = container.style;
-  style.position = "relative";
-  style.width = BOARD_WIDTH + "px";
-  style.height = BOARD_HEIGHT + "px";
-  style.background = "url(" + images + "board.jpg)";
-  var this_ = this;
-  for (var sq = 0; sq < 256; sq ++) {
-    if (!IN_BOARD(sq)) {
-      this.imgSquares.push(null);
-      continue;
+  this.mvList = [];  // 历史走子
+
+  this.sqEls = new Array(90);
+
+  this.init();
+}
+
+Board.prototype.init = function() {
+  const this_ = this;
+  const c = this.container;
+  c.innerHTML = "";
+  c.style.position = "relative";
+  const w = BOARD_OFFSET_X * 2 + BOARD_W * SQUARE_W;
+  const h = BOARD_OFFSET_Y * 2 + BOARD_H * SQUARE_H;
+  c.style.width  = w + "px";
+  c.style.height = h + "px";
+
+  // 背景: 画一个简单的棋盘 (用 canvas 不用图片)
+  const canvas = document.createElement("canvas");
+  canvas.width  = w;
+  canvas.height = h;
+  canvas.style.position = "absolute";
+  canvas.style.left = "0";
+  canvas.style.top  = "0";
+  c.appendChild(canvas);
+  this.drawBoardBackground(canvas);
+  this.bgCanvas = canvas;
+
+  // 9x10 棋格 + 棋子
+  for (let r = 0; r < BOARD_H; r++) {
+    for (let f = 0; f < BOARD_W; f++) {
+      const sq = f + r * 9;
+      const el = document.createElement("div");
+      el.style.position = "absolute";
+      el.style.left = (BOARD_OFFSET_X + f * SQUARE_W) + "px";
+      el.style.top  = (BOARD_OFFSET_Y + r * SQUARE_H) + "px";
+      el.style.width  = SQUARE_W + "px";
+      el.style.height = SQUARE_H + "px";
+      el.style.display = "flex";
+      el.style.alignItems = "center";
+      el.style.justifyContent = "center";
+      el.style.fontSize = (SQUARE_W - 16) + "px";
+      el.style.fontWeight = "bold";
+      el.style.userSelect = "none";
+      el.style.cursor = "pointer";
+      el.style.zIndex = "1";
+      el.onclick = (function(sq_) { return function() { this_.clickSquare(sq_); }; })(sq);
+      c.appendChild(el);
+      this.sqEls[sq] = el;
     }
-    var img = document.createElement("img");
-    var style = img.style;
-    style.position = "absolute";
-    style.left = SQ_X(sq);
-    style.top = SQ_Y(sq);
-    style.width = SQUARE_SIZE;
-    style.height = SQUARE_SIZE;
-    style.zIndex = 0;
-    img.onmousedown = function(sq_) {
-      return function() {
-        this_.clickSquare(sq_);
-      }
-    } (sq);
-    container.appendChild(img);
-    this.imgSquares.push(img);
   }
 
-  this.thinking = document.createElement("img");
-  this.thinking.src = images + "thinking.gif";
-  style = this.thinking.style;
-  style.visibility = "hidden";
-  style.position = "absolute";
-  style.left = THINKING_LEFT + "px";
-  style.top = THINKING_TOP + "px";
-  container.appendChild(this.thinking);
+  // info div
+  this.infoEl = document.createElement("div");
+  this.infoEl.style.position = "absolute";
+  this.infoEl.style.left = "0";
+  this.infoEl.style.top = (h + 8) + "px";
+  this.infoEl.style.width = w + "px";
+  this.infoEl.style.fontFamily = "monospace";
+  this.infoEl.style.fontSize = "13px";
+  this.infoEl.style.color = "#222";
+  this.infoEl.style.background = "#f4f4f4";
+  this.infoEl.style.border = "1px solid #ddd";
+  this.infoEl.style.padding = "8px";
+  this.infoEl.style.whiteSpace = "pre";
+  this.infoEl.style.zIndex = "5";
+  this.infoEl.innerText = "等待开始...";
+  c.appendChild(this.infoEl);
 
-  this.dummy = document.createElement("div");
-  this.dummy.style.position = "absolute";
-  container.appendChild(this.dummy);
+  // thinking gif / spinner
+  this.thinking = document.createElement("div");
+  this.thinking.style.position = "absolute";
+  this.thinking.style.left = (w / 2 - THINKING_SIZE / 2) + "px";
+  this.thinking.style.top  = (h / 2 - THINKING_SIZE / 2) + "px";
+  this.thinking.style.width  = THINKING_SIZE + "px";
+  this.thinking.style.height = THINKING_SIZE + "px";
+  this.thinking.style.border = "4px solid #f3f3f3";
+  this.thinking.style.borderTop = "4px solid #3498db";
+  this.thinking.style.borderRadius = "50%";
+  this.thinking.style.animation = "spin 1s linear infinite";
+  this.thinking.style.display = "none";
+  this.thinking.style.zIndex = "10";
+  c.appendChild(this.thinking);
+
+  // CSS animation
+  if (!document.getElementById("__board_style__")) {
+    const style = document.createElement("style");
+    style.id = "__board_style__";
+    style.innerHTML = "@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }";
+    document.head.appendChild(style);
+  }
 
   this.flushBoard();
-}
+};
 
-Board.prototype.playSound = function(soundFile) {
-  if (!this.sound) {
-    return;
+Board.prototype.drawBoardBackground = function(canvas) {
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#f0d8a8";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.strokeStyle = "#5b3a1e";
+  ctx.lineWidth = 1;
+
+  // 画 9x10 网格
+  for (let r = 0; r < BOARD_H; r++) {
+    ctx.beginPath();
+    ctx.moveTo(BOARD_OFFSET_X, BOARD_OFFSET_Y + r * SQUARE_H);
+    ctx.lineTo(BOARD_OFFSET_X + (BOARD_W - 1) * SQUARE_W, BOARD_OFFSET_Y + r * SQUARE_H);
+    ctx.stroke();
   }
-  try {
-    new Audio(this.sounds + soundFile + ".wav").play();
-  } catch (e) {
-    this.dummy.innerHTML= "<embed src=\"" + this.sounds + soundFile +
-        ".wav\" hidden=\"true\" autostart=\"true\" loop=\"false\" />";
+  for (let f = 0; f < BOARD_W; f++) {
+    ctx.beginPath();
+    ctx.moveTo(BOARD_OFFSET_X + f * SQUARE_W, BOARD_OFFSET_Y);
+    ctx.lineTo(BOARD_OFFSET_X + f * SQUARE_W, BOARD_OFFSET_Y + (BOARD_H - 1) * SQUARE_H);
+    ctx.stroke();
   }
-}
-
-Board.prototype.setSearch = function(hashLevel) {
-  this.search = hashLevel == 0 ? null : new Search(this.pos, hashLevel);
-}
-
-Board.prototype.flipped = function(sq) {
-  return this.computer == 0 ? SQUARE_FLIP(sq) : sq;
-}
-
-Board.prototype.computerMove = function() {
-  return this.pos.sdPlayer == this.computer;
-}
-
-Board.prototype.computerLastMove = function() {
-  return 1 - this.pos.sdPlayer == this.computer;
-}
-
-Board.prototype.addMove = function(mv, computerMove) {
-  if (!this.pos.legalMove(mv)) {
-    return;
+  // 上下边线
+  for (let i = 0; i < 2; i++) {
+    const y = i === 0 ? BOARD_OFFSET_Y - SQUARE_H / 2 : BOARD_OFFSET_Y + (BOARD_H - 0.5) * SQUARE_H;
+    // 上下边框再画一遍
+    // 简化: 画棋盘上下边线
   }
-  if (!this.pos.makeMove(mv)) {
-    this.playSound("illegal");
-    return;
-  }
-  this.busy = true;
-  if (!this.animated) {
-    this.postAddMove(mv, computerMove);
-    return;
-  }
+  // 边线
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.rect(BOARD_OFFSET_X - SQUARE_W / 2, BOARD_OFFSET_Y - SQUARE_H / 2,
+           BOARD_W * SQUARE_W, BOARD_H * SQUARE_H);
+  ctx.stroke();
+  ctx.lineWidth = 1;
 
-  var sqSrc = this.flipped(SRC(mv));
-  var xSrc = SQ_X(sqSrc);
-  var ySrc = SQ_Y(sqSrc);
-  var sqDst = this.flipped(DST(mv));
-  var xDst = SQ_X(sqDst);
-  var yDst = SQ_Y(sqDst);
-  var style = this.imgSquares[sqSrc].style;
-  style.zIndex = 256;
-  var step = MAX_STEP - 1;
-  var this_ = this;
-  var timer = setInterval(function() {
-    if (step == 0) {
-      clearInterval(timer);
-      style.left = xSrc + "px";
-      style.top = ySrc + "px";
-      style.zIndex = 0;
-      this_.postAddMove(mv, computerMove);
-    } else {
-      style.left = MOVE_PX(xSrc, xDst, step);
-      style.top = MOVE_PX(ySrc, yDst, step);
-      step --;
-    }
-  }, 16);
-}
+  // 宫 (九宫格) - 红方
+  ctx.beginPath();
+  ctx.moveTo(BOARD_OFFSET_X + 3 * SQUARE_W, BOARD_OFFSET_Y + 7 * SQUARE_H);
+  ctx.lineTo(BOARD_OFFSET_X + 5 * SQUARE_W, BOARD_OFFSET_Y + 9 * SQUARE_H);
+  ctx.moveTo(BOARD_OFFSET_X + 5 * SQUARE_W, BOARD_OFFSET_Y + 7 * SQUARE_H);
+  ctx.lineTo(BOARD_OFFSET_X + 3 * SQUARE_W, BOARD_OFFSET_Y + 9 * SQUARE_H);
+  ctx.stroke();
+  // 宫 - 黑方
+  ctx.beginPath();
+  ctx.moveTo(BOARD_OFFSET_X + 3 * SQUARE_W, BOARD_OFFSET_Y + 0 * SQUARE_H);
+  ctx.lineTo(BOARD_OFFSET_X + 5 * SQUARE_W, BOARD_OFFSET_Y + 2 * SQUARE_H);
+  ctx.moveTo(BOARD_OFFSET_X + 5 * SQUARE_W, BOARD_OFFSET_Y + 0 * SQUARE_H);
+  ctx.lineTo(BOARD_OFFSET_X + 3 * SQUARE_W, BOARD_OFFSET_Y + 2 * SQUARE_H);
+  ctx.stroke();
+};
 
-Board.prototype.postAddMove = function(mv, computerMove) {
-  if (this.mvLast > 0) {
-    this.drawSquare(SRC(this.mvLast), false);
-    this.drawSquare(DST(this.mvLast), false);
-  }
-  this.drawSquare(SRC(mv), true);
-  this.drawSquare(DST(mv), true);
-  this.sqSelected = 0;
-  this.mvLast = mv;
-
-  if (this.pos.isMate()) {
-    this.playSound(computerMove ? "loss" : "win");
-    this.result = computerMove ? RESULT_LOSS : RESULT_WIN;
-
-    var pc = SIDE_TAG(this.pos.sdPlayer) + PIECE_KING;
-    var sqMate = 0;
-    for (var sq = 0; sq < 256; sq ++) {
-      if (this.pos.squares[sq] == pc) {
-        sqMate = sq;
-        break;
-      }
-    }
-    if (!this.animated || sqMate == 0) {
-      this.postMate(computerMove);
-      return;
-    }
-
-    sqMate = this.flipped(sqMate);
-    var style = this.imgSquares[sqMate].style;
-    style.zIndex = 256;
-    var xMate = SQ_X(sqMate);
-    var step = MAX_STEP;
-    var this_ = this;
-    var timer = setInterval(function() {
-      if (step == 0) {
-        clearInterval(timer);
-        style.left = xMate + "px";
-        style.zIndex = 0;
-        this_.imgSquares[sqMate].src = this_.images +
-            (this_.pos.sdPlayer == 0 ? "r" : "b") + "km.gif";
-        this_.postMate(computerMove);
-      } else {
-        style.left = (xMate + ((step & 1) == 0 ? step : -step) * 2) + "px";
-        step --;
-      }
-    }, 50);
-    return;
-  }
-
-  var vlRep = this.pos.repStatus(3);
-  if (vlRep > 0) {
-    vlRep = this.pos.repValue(vlRep);
-    if (vlRep > -WIN_VALUE && vlRep < WIN_VALUE) {
-      this.playSound("draw");
-      this.result = RESULT_DRAW;
-      alertDelay("˫���������ͣ������ˣ�");
-    } else if (computerMove == (vlRep < 0)) {
-      this.playSound("loss");
-      this.result = RESULT_LOSS;
-      alertDelay("�����������벻Ҫ���٣�");
-    } else {
-      this.playSound("win");
-      this.result = RESULT_WIN;
-      alertDelay("����������ף����ȡ��ʤ����");
-    }
-    this.postAddMove2();
-    this.busy = false;
-    return;
-  }
-
-  if (this.pos.captured()) {
-    var hasMaterial = false;
-    for (var sq = 0; sq < 256; sq ++) {
-      if (IN_BOARD(sq) && (this.pos.squares[sq] & 7) > 2) {
-        hasMaterial = true;
-        break;
-      }
-    }
-    if (!hasMaterial) {
-      this.playSound("draw");
-      this.result = RESULT_DRAW;
-      alertDelay("˫����û�н��������ˣ������ˣ�");
-      this.postAddMove2();
-      this.busy = false;
-      return;
-    }
-  } else if (this.pos.pcList.length > 100) {
-    var captured = false;
-    for (var i = 2; i <= 100; i ++) {
-      if (this.pos.pcList[this.pos.pcList.length - i] > 0) {
-        captured = true;
-        break;
-      }
-    }
-    if (!captured) {
-      this.playSound("draw");
-      this.result = RESULT_DRAW;
-      alertDelay("������Ȼ�������ͣ������ˣ�");
-      this.postAddMove2();
-      this.busy = false;
-      return;
-    }
-  }
-
-  if (this.pos.inCheck()) {
-    this.playSound(computerMove ? "check2" : "check");
-  } else if (this.pos.captured()) {
-    this.playSound(computerMove ? "capture2" : "capture");
-  } else {
-    this.playSound(computerMove ? "move2" : "move");
-  }
-
-  this.postAddMove2();
-  this.response();
-}
-
-Board.prototype.postAddMove2 = function() {
-  if (typeof this.onAddMove == "function") {
-    this.onAddMove();
-  }
-}
-
-Board.prototype.postMate = function(computerMove) {
-  alertDelay(computerMove ? "���ٽ�������" : "ף����ȡ��ʤ����");
-  this.postAddMove2();
-  this.busy = false;
-}
-
-Board.prototype.response = function() {
-  if (this.search == null || !this.computerMove()) {
-    this.busy = false;
-    return;
-  }
-  this.thinking.style.visibility = "visible";
-  var this_ = this;
-  this.busy = true;
-  setTimeout(function() {
-    this_.addMove(board.search.searchMain(LIMIT_DEPTH, board.millis), true);
-    this_.thinking.style.visibility = "hidden";
-  }, 250);
-}
-
-Board.prototype.clickSquare = function(sq_) {
-  if (this.busy || this.result != RESULT_UNKNOWN) {
-    return;
-  }
-  var sq = this.flipped(sq_);
-  var pc = this.pos.squares[sq];
-  if ((pc & SIDE_TAG(this.pos.sdPlayer)) != 0) {
-    this.playSound("click");
-    if (this.mvLast != 0) {
-      this.drawSquare(SRC(this.mvLast), false);
-      this.drawSquare(DST(this.mvLast), false);
-    }
-    if (this.sqSelected) {
-      this.drawSquare(this.sqSelected, false);
-    }
-    this.drawSquare(sq, true);
-    this.sqSelected = sq;
-  } else if (this.sqSelected > 0) {
-    this.addMove(MOVE(this.sqSelected, sq), false);
-  }
-}
-
-Board.prototype.drawSquare = function(sq, selected) {
-  var img = this.imgSquares[this.flipped(sq)];
-  img.src = this.images + PIECE_NAME[this.pos.squares[sq]] + ".gif";
-  img.style.backgroundImage = selected ? "url(" + this.images + "oos.gif)" : "";
-}
+// -----------------------------------------------------------------------------
+// 棋盘显示
+// -----------------------------------------------------------------------------
 
 Board.prototype.flushBoard = function() {
-  this.mvLast = this.pos.mvList[this.pos.mvList.length - 1];
-  for (var sq = 0; sq < 256; sq ++) {
-    if (IN_BOARD(sq)) {
-      this.drawSquare(sq, sq == SRC(this.mvLast) || sq == DST(this.mvLast));
+  for (let sq = 0; sq < 90; sq++) {
+    const pc = this.pos.pieceOn[sq];
+    const el = this.sqEls[sq];
+    el.innerText = pieceToChar(pc);
+    el.style.color = (pc >= 0 && pc < 7) ? "#c00" : "#000";
+    el.style.background = "transparent";
+  }
+  // 高亮上一步
+  if (this.mvLast) {
+    const from = moveFrom(this.mvLast);
+    const to = moveTo(this.mvLast);
+    this.sqEls[from].style.background = "rgba(255,255,0,0.3)";
+    this.sqEls[to].style.background   = "rgba(255,255,0,0.5)";
+  }
+};
+
+// -----------------------------------------------------------------------------
+// 用户点击
+// -----------------------------------------------------------------------------
+
+Board.prototype.clickSquare = function(sq) {
+  if (this.busy || this.result !== RESULT_UNKNOWN) return;
+  if (this.computer !== -1 && this.pos.side === this.computer) return;
+
+  const pc = this.pos.pieceOn[sq];
+  if (pc >= 0 && COLOR_OF[pc] === this.pos.side) {
+    // 选中我方棋子
+    this.sqSelected = sq;
+    this.highlightSelect();
+  } else if (this.sqSelected >= 0) {
+    // 尝试走子
+    const mv = makeMove(this.sqSelected, sq);
+    if (this.tryMove(mv)) {
+      this.sqSelected = -1;
+      this.flushBoard();
     }
   }
-}
+};
 
-Board.prototype.restart = function(fen) {
-  if (this.busy) {
+Board.prototype.highlightSelect = function() {
+  for (let s = 0; s < 90; s++) {
+    this.sqEls[s].style.background = "transparent";
+  }
+  if (this.mvLast) {
+    this.sqEls[moveFrom(this.mvLast)].style.background = "rgba(255,255,0,0.3)";
+    this.sqEls[moveTo(this.mvLast)].style.background   = "rgba(255,255,0,0.5)";
+  }
+  if (this.sqSelected >= 0) {
+    this.sqEls[this.sqSelected].style.background = "rgba(0,200,0,0.4)";
+  }
+};
+
+Board.prototype.tryMove = function(mv) {
+  const from = moveFrom(mv);
+  const to = moveTo(mv);
+  const pc = this.pos.pieceOn[from];
+  if (pc < 0) return false;
+  if (COLOR_OF[pc] !== this.pos.side) return false;
+  // 检查合法性: 走子后是否送将
+  const worker = this.worker;
+  if (!worker.makeMoveLegal(mv)) return false;
+  this.pos.doMove(mv, null);
+  this.mvList.push(mv);
+  this.mvLast = mv;
+  this.busy = true;
+  this.flushBoard();
+  this.busy = false;
+  // 检查游戏结束
+  this.checkGameEnd(false);
+  // 电脑回复
+  if (!this.busy && this.result === RESULT_UNKNOWN) this.computerResponse();
+  return true;
+};
+
+// -----------------------------------------------------------------------------
+// 电脑思考
+// -----------------------------------------------------------------------------
+
+Board.prototype.computerResponse = function() {
+  if (this.computer === -1) return;
+  if (this.pos.side !== this.computer) return;
+  this.thinking.style.display = "block";
+  this.busy = true;
+  // 同步 worker's pos 到 board 的 pos
+  for (let p = 0; p < 14; p++) this.worker.pos.byPieceBB[p] = this.pos.byPieceBB[p];
+  this.worker.pos.occRed = this.pos.occRed;
+  this.worker.pos.occBlk = this.pos.occBlk;
+  this.worker.pos.occ    = this.pos.occ;
+  this.worker.pos.side   = this.pos.side;
+  this.worker.pos.pieceOn = this.pos.pieceOn.slice();
+  this.worker.pos.kingRed = this.pos.kingRed;
+  this.worker.pos.kingBlk = this.pos.kingBlk;
+  this.worker.timeLimit = this.millis;
+  this.worker.maxDepth  = 32;
+  const this_ = this;
+  // 异步: 让 UI 有时间更新
+  setTimeout(function() {
+    const mv = this_.worker.searchRoot();
+    this_.thinking.style.display = "none";
+    if (mv) {
+      this_.pos.doMove(mv, null);
+      this_.mvList.push(mv);
+      this_.mvLast = mv;
+      this_.flushBoard();
+      if (this_.onAddMove) this_.onAddMove();
+    }
+    this_.checkGameEnd(true);
+    this_.busy = false;
+  }, 50);
+};
+
+Board.prototype.checkGameEnd = function(computerMove) {
+  const mvs = new Int32Array(256);
+  const n = this.pos.generateLegalMoves(mvs);
+  if (n === 0) {
+    this.result = computerMove ? RESULT_LOSS : RESULT_WIN;
+    this.infoEl.innerText = (this.result === RESULT_WIN ? "你赢了!" : "电脑赢了!") + " (将死)";
     return;
   }
+  // 简单和棋: 没有进攻子
+  // (省略)
+};
+
+// -----------------------------------------------------------------------------
+// 启动 / 重启
+// -----------------------------------------------------------------------------
+
+Board.prototype.start = function(computerSide, fen) {
+  this.computer = computerSide;  // -1: 玩家, 0: 红方电脑, 1: 黑方电脑
+  if (fen) this.pos.setFen(fen);
+  this.mvList = [];
+  this.mvLast = 0;
+  this.sqSelected = -1;
   this.result = RESULT_UNKNOWN;
-  this.pos.fromFen(fen);
+  this.busy = false;
+  this.worker = new SearchWorker();
+  // 复制 position 到 worker
+  this.worker.pos.byPieceBB = this.pos.byPieceBB.slice();
+  this.worker.pos.occRed = this.pos.occRed;
+  this.worker.pos.occBlk = this.pos.occBlk;
+  this.worker.pos.occ    = this.pos.occ;
+  this.worker.pos.side   = this.pos.side;
+  this.worker.pos.pieceOn = this.pos.pieceOn.slice();
+  this.worker.pos.kingRed = this.pos.kingRed;
+  this.worker.pos.kingBlk = this.pos.kingBlk;
+  this.worker.timeLimit = this.millis;
+  this.worker.maxDepth  = 32;
+
   this.flushBoard();
-  this.playSound("newgame");
-  this.response();
-}
+  this.computerResponse();
+};
 
 Board.prototype.retract = function() {
-  if (this.busy) {
-    return;
+  if (this.mvList.length === 0) return;
+  // 撤销玩家和电脑的最后一手
+  this.pos.undoMove();
+  this.mvList.pop();
+  if (this.mvList.length > 0 && this.pos.side !== this.computer) {
+    this.pos.undoMove();
+    this.mvList.pop();
   }
-  this.result = RESULT_UNKNOWN;
-  if (this.pos.mvList.length > 1) {
-    this.pos.undoMakeMove();
-  }
-  if (this.pos.mvList.length > 1 && this.computerMove()) {
-    this.pos.undoMakeMove();
-  }
+  this.mvLast = this.mvList[this.mvList.length - 1] || 0;
+  this.sqSelected = -1;
   this.flushBoard();
-  this.response();
-}
+};
 
-Board.prototype.setSound = function(sound) {
-  this.sound = sound;
-  if (sound) {
-    this.playSound("click");
+// =============================================================================
+// 搜索信息回调 (Pikafish 风格)
+// =============================================================================
+
+window.onSearchInfo = function(info) {
+  // 找到 Board 实例
+  if (typeof window._board === 'undefined') return;
+  const board = window._board;
+  if (!board.infoEl) return;
+
+  // 评分 -> 红方视角 (cp)
+  // 在 SearchWorker 中 score 是从走子方视角
+  // 走子方 == 当前 side
+  // 我们用 cp = score * (红方为 1, 黑方为 -1)
+  let scoreCp = info.score;
+  // 转为红方视角: 如果当前是黑方走, 翻转
+  // 这里我们假设搜索时 side 已经被记录
+  // 简化: 直接显示
+  let scoreStr;
+  if (Math.abs(info.score) > 29000) {
+    const mateIn = (MATE_VALUE - Math.abs(info.score));
+    scoreStr = (info.score > 0 ? "+" : "-") + "M" + mateIn;
+  } else {
+    scoreStr = (info.score > 0 ? "+" : "") + info.score;
   }
-}
+
+  // PV: 转 ICCS
+  const pvStr = info.pv.map(function(mv) {
+    return moveToIccs(mv, board.flipped);
+  }).join(" ");
+
+  // 输出 Pikafish 风格:
+  // info depth 8 score cp +50 nodes 12345 nps 5000 time 2468 pv e2e4 e7e5
+  let line = "info";
+  line += " depth " + info.depth;
+  line += " score cp " + scoreStr;
+  line += " nodes " + info.nodes;
+  line += " nps " + (info.knps * 1000);
+  line += " time " + info.time;
+  line += " pv " + pvStr;
+  board.infoEl.innerText = line + "\nknps: " + info.knps + " | best: " + (info.pv[0] ? moveToIccs(info.pv[0], board.flipped) : "...");
+};
+
+window.Board = Board;
