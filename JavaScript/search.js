@@ -141,6 +141,7 @@ var HASH_PV = 3;
 function Search(pos, hashLevel) {
   this.hashMask = (1 << hashLevel) - 1;
   this.pos = pos;
+  this.onSearchUpdate = null; // 搜索信息更新回调
 }
 
 Search.prototype.getHashItem = function() {
