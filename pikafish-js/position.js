@@ -431,17 +431,30 @@ class Position {
   
   // Check if slide is legal
   legal_slide(from, to) {
-    if (T.file_of(from) !== T.file_of(to) && T.rank_of(from) !== T.rank_of(to)) {
+    const fromF = T.file_of(from);
+    const fromR = T.rank_of(from);
+    const toF = T.file_of(to);
+    const toR = T.rank_of(to);
+    
+    if (fromF !== toF && fromR !== toR) {
       return false;
     }
     
-    const dx = Math.sign(T.file_of(to) - T.file_of(from));
-    const dy = Math.sign(T.rank_of(to) - T.rank_of(from));
-    let sq = T.make_square(T.file_of(from) + dx, T.rank_of(from) + dy);
-    
-    while (sq !== to) {
-      if (!this.empty(sq)) return false;
-      sq = T.make_square(T.file_of(sq) + dx, T.rank_of(sq) + dy);
+    // Check each square in between
+    if (fromF === toF) {
+      // Vertical move
+      const startR = Math.min(fromR, toR);
+      const endR = Math.max(fromR, toR);
+      for (let r = startR + 1; r < endR; r++) {
+        if (!this.empty(T.make_square(fromF, r))) return false;
+      }
+    } else {
+      // Horizontal move
+      const startF = Math.min(fromF, toF);
+      const endF = Math.max(fromF, toF);
+      for (let f = startF + 1; f < endF; f++) {
+        if (!this.empty(T.make_square(f, fromR))) return false;
+      }
     }
     
     return true;
@@ -449,18 +462,32 @@ class Position {
   
   // Check if cannon capture is legal
   legal_cannon_capture(from, to) {
-    if (T.file_of(from) !== T.file_of(to) && T.rank_of(from) !== T.rank_of(to)) {
+    const fromF = T.file_of(from);
+    const fromR = T.rank_of(from);
+    const toF = T.file_of(to);
+    const toR = T.rank_of(to);
+    
+    if (fromF !== toF && fromR !== toR) {
       return false;
     }
     
-    const dx = Math.sign(T.file_of(to) - T.file_of(from));
-    const dy = Math.sign(T.rank_of(to) - T.rank_of(from));
-    let sq = T.make_square(T.file_of(from) + dx, T.rank_of(from) + dy);
     let count = 0;
     
-    while (sq !== to) {
-      if (!this.empty(sq)) count++;
-      sq = T.make_square(T.file_of(sq) + dx, T.rank_of(sq) + dy);
+    // Check each square in between
+    if (fromF === toF) {
+      // Vertical move
+      const startR = Math.min(fromR, toR);
+      const endR = Math.max(fromR, toR);
+      for (let r = startR + 1; r < endR; r++) {
+        if (!this.empty(T.make_square(fromF, r))) count++;
+      }
+    } else {
+      // Horizontal move
+      const startF = Math.min(fromF, toF);
+      const endF = Math.max(fromF, toF);
+      for (let f = startF + 1; f < endF; f++) {
+        if (!this.empty(T.make_square(f, fromR))) count++;
+      }
     }
     
     return count === 1;
