@@ -272,10 +272,11 @@
         <div style="margin-top:4px"><input type="button" class="button" value="悔棋" onclick="retract_click()"></div>
 
         <div class="label" style="margin-top:10px">电脑水平</div>
-        <div><select id="selLevel" size="3" onchange="level_change()">
-          <option selected value="0">入门 (10ms)</option>
-          <option value="1">业余 (100ms)</option>
-          <option value="2">专业 (1s)</option>
+        <div><select id="selLevel" size="4" onchange="level_change()">
+          <option value="0">入门 (0.5s)</option>
+          <option value="1">业余 (1.5s)</option>
+          <option selected value="2">专业 (5s)</option>
+          <option value="3">大师 (15s)</option>
         </select></div>
 
         <div class="chk-row"><input type="checkbox" id="chkAnimated" checked onclick="board.animated = checked"><label for="chkAnimated">动画</label></div>

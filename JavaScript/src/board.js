@@ -55,8 +55,8 @@ export class Board {
     this.imgSquares = new Array(256).fill(null);
     this.sqSelected = 0;
     this.mvLast = 0;
-    this.millis = 0;
-    this.computer = -1;
+    this.millis = 100; // 默认 100ms
+    this.computer = -1; // 默认不翻转坐标
     this.result = RESULT_UNKNOWN;
     this.busy = false;
 

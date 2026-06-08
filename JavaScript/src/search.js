@@ -479,9 +479,9 @@ export class Search {
       const vl = this.searchRoot(i);
       this.allMillis = Date.now() - t0;
       if (this.onInfo) this.onInfo(this._buildInfo(i, vl));
-      if (this.allMillis > millis) break;
-      if (vl > WIN_VALUE || vl < -WIN_VALUE) break;
-      if (this.searchUnique(1 - WIN_VALUE, i)) break;
+      // 放宽提前终止条件：至少搜 10 层，或者时间用完才停
+      if (i >= 10 && this.allMillis > millis) break;
+      if (i >= 20 && (vl > WIN_VALUE || vl < -WIN_VALUE)) break;
     }
     return this.mvResult;
   }

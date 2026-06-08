@@ -32,7 +32,7 @@ const board = new Board(document.getElementById("container"), "images/", "sounds
 const search = new Search(board.pos, 18);
 board.setSearch(search);
 board.bookDat = window.BOOK_DAT || [];
-board.millis = 100;
+board.millis = 5000; // 默认 5 秒
 board.computer = 1;
 
 // ---------- 引擎信息 -> 底部 info 面板 ----------
@@ -117,8 +117,9 @@ board.onAddMove = function () {
 
 // ---------- UI 控件 ----------
 function level_change() {
-  // selLevel 0=入门(10ms) 1=业余(100ms) 2=专业(1000ms)
-  board.millis = Math.pow(10, selLevel.selectedIndex + 1);
+  // selLevel 0=入门(500ms) 1=业余(1500ms) 2=专业(5000ms) 3=大师(15000ms)
+  const levels = [500, 1500, 5000, 15000];
+  board.millis = levels[selLevel.selectedIndex] || 1500;
 }
 
 function restart_click() {
