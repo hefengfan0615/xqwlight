@@ -58,6 +58,11 @@ class Bitboard {
     return new Bitboard(~this.low, ~this.high);
   }
 
+  // Convert to BigInt
+  toBigInt() {
+    return (BigInt(this.high) << 64n) | BigInt(this.low);
+  }
+
   and(other) {
     return new Bitboard(this.low & other.low, this.high & other.high);
   }
@@ -177,40 +182,44 @@ class Bitboard {
 // Predefined bitboards
 // ==============================================
 
-// Palace (9 squares for each side)
-const Palace = new Bitboard(0x70381C, 0xE07038);
+// Palace (9 squares for each side) - converted to BigInt
+function makeBB(low, high) {
+  return (BigInt(high) << 64n) | BigInt(low >>> 0);
+}
 
-// File bitboards
-const FileABB = new Bitboard(0x8040201008040201, 0x20100);
-const FileBBB = new Bitboard(0x1008040201008040, 0x40200);
-const FileCBB = new Bitboard(0x2010080402010080, 0x80400);
-const FileDBB = new Bitboard(0x4020100804020100, 0x100800);
-const FileEBB = new Bitboard(0x8040201008040200, 0x201000);
-const FileFBB = new Bitboard(0x10080402010080400, 0x402000);
-const FileGBB = new Bitboard(0x20100804020100800, 0x804000);
-const FileHBB = new Bitboard(0x40201008040201000, 0x1008000);
-const FileIBB = new Bitboard(0x80402010080402000, 0x2010000);
+const Palace = makeBB(0x70381C, 0xE07038);
 
-// Rank bitboards
-let Rank0BB = new Bitboard(0x1FF, 0);
-let Rank1BB = Rank0BB.shl(T.FILE_NB);
-let Rank2BB = Rank0BB.shl(T.FILE_NB * 2);
-let Rank3BB = Rank0BB.shl(T.FILE_NB * 3);
-let Rank4BB = Rank0BB.shl(T.FILE_NB * 4);
-let Rank5BB = Rank0BB.shl(T.FILE_NB * 5);
-let Rank6BB = Rank0BB.shl(T.FILE_NB * 6);
-let Rank7BB = Rank0BB.shl(T.FILE_NB * 7);
-let Rank8BB = Rank0BB.shl(T.FILE_NB * 8);
-let Rank9BB = Rank0BB.shl(T.FILE_NB * 9);
+// File bitboards - converted to BigInt
+const FileABB = makeBB(0x8040201008040201, 0x20100);
+const FileBBB = makeBB(0x1008040201008040, 0x40200);
+const FileCBB = makeBB(0x2010080402010080, 0x80400);
+const FileDBB = makeBB(0x4020100804020100, 0x100800);
+const FileEBB = makeBB(0x8040201008040200, 0x201000);
+const FileFBB = makeBB(0x10080402010080400, 0x402000);
+const FileGBB = makeBB(0x20100804020100800, 0x804000);
+const FileHBB = makeBB(0x40201008040201000, 0x1008000);
+const FileIBB = makeBB(0x80402010080402000, 0x2010000);
+
+// Rank bitboards - converted to BigInt
+let Rank0BB = makeBB(0x1FF, 0);
+let Rank1BB = Rank0BB << BigInt(T.FILE_NB);
+let Rank2BB = Rank0BB << BigInt(T.FILE_NB * 2);
+let Rank3BB = Rank0BB << BigInt(T.FILE_NB * 3);
+let Rank4BB = Rank0BB << BigInt(T.FILE_NB * 4);
+let Rank5BB = Rank0BB << BigInt(T.FILE_NB * 5);
+let Rank6BB = Rank0BB << BigInt(T.FILE_NB * 6);
+let Rank7BB = Rank0BB << BigInt(T.FILE_NB * 7);
+let Rank8BB = Rank0BB << BigInt(T.FILE_NB * 8);
+let Rank9BB = Rank0BB << BigInt(T.FILE_NB * 9);
 
 const HalfBB = [
-  Rank0BB.or(Rank1BB).or(Rank2BB).or(Rank3BB).or(Rank4BB),
-  Rank5BB.or(Rank6BB).or(Rank7BB).or(Rank8BB).or(Rank9BB)
+  Rank0BB | Rank1BB | Rank2BB | Rank3BB | Rank4BB,
+  Rank5BB | Rank6BB | Rank7BB | Rank8BB | Rank9BB
 ];
 
 const PawnBB = [
-  HalfBB[T.BLACK].or(Rank3BB.and(FileABB)).or(Rank3BB.and(FileCBB)).or(Rank3BB.and(FileEBB)).or(Rank3BB.and(FileGBB)).or(Rank3BB.and(FileIBB)).or(Rank4BB.and(FileABB)).or(Rank4BB.and(FileCBB)).or(Rank4BB.and(FileEBB)).or(Rank4BB.and(FileGBB)).or(Rank4BB.and(FileIBB)),
-  HalfBB[T.WHITE].or(Rank6BB.and(FileABB)).or(Rank6BB.and(FileCBB)).or(Rank6BB.and(FileEBB)).or(Rank6BB.and(FileGBB)).or(Rank6BB.and(FileIBB)).or(Rank5BB.and(FileABB)).or(Rank5BB.and(FileCBB)).or(Rank5BB.and(FileEBB)).or(Rank5BB.and(FileGBB)).or(Rank5BB.and(FileIBB))
+  HalfBB[T.BLACK] | (Rank3BB & FileABB) | (Rank3BB & FileCBB) | (Rank3BB & FileEBB) | (Rank3BB & FileGBB) | (Rank3BB & FileIBB) | (Rank4BB & FileABB) | (Rank4BB & FileCBB) | (Rank4BB & FileEBB) | (Rank4BB & FileGBB) | (Rank4BB & FileIBB),
+  HalfBB[T.WHITE] | (Rank6BB & FileABB) | (Rank6BB & FileCBB) | (Rank6BB & FileEBB) | (Rank6BB & FileGBB) | (Rank6BB & FileIBB) | (Rank5BB & FileABB) | (Rank5BB & FileCBB) | (Rank5BB & FileEBB) | (Rank5BB & FileGBB) | (Rank5BB & FileIBB)
 ];
 
 // Precompute PopCnt16
@@ -237,7 +246,7 @@ for (let i = 0; i < T.SQUARE_NB; i++) {
 // Precompute SquareBB
 const SquareBB = new Array(T.SQUARE_NB);
 for (let sq = 0; sq < T.SQUARE_NB; sq++) {
-  SquareBB[sq] = Bitboard.square(sq);
+  SquareBB[sq] = 1n << BigInt(sq);
 }
 
 // Precompute LineBB and BetweenBB (simplified version)
@@ -247,8 +256,8 @@ for (let i = 0; i < T.SQUARE_NB; i++) {
   LineBB[i] = new Array(T.SQUARE_NB);
   BetweenBB[i] = new Array(T.SQUARE_NB);
   for (let j = 0; j < T.SQUARE_NB; j++) {
-    LineBB[i][j] = new Bitboard();
-    BetweenBB[i][j] = new Bitboard();
+    LineBB[i][j] = 0n;
+    BetweenBB[i][j] = 0n;
     
     if (i === j) continue;
     
@@ -262,18 +271,18 @@ for (let i = 0; i < T.SQUARE_NB; i++) {
       let to = Math.max(i, j);
       for (let k = from; k <= to; k++) {
         if (fi === T.file_of(k)) {
-          LineBB[i][j].set(k);
+          LineBB[i][j] |= (1n << BigInt(k));
           if (k > Math.min(i, j) && k < Math.max(i, j)) {
-            BetweenBB[i][j].set(k);
+            BetweenBB[i][j] |= (1n << BigInt(k));
           }
         }
       }
       if (ri === rj) {
         for (let f = Math.min(fi, fj); f <= Math.max(fi, fj); f++) {
           let k = T.make_square(f, ri);
-          LineBB[i][j].set(k);
+          LineBB[i][j] |= (1n << BigInt(k));
           if (k > Math.min(i, j) && k < Math.max(i, j)) {
-            BetweenBB[i][j].set(k);
+            BetweenBB[i][j] |= (1n << BigInt(k));
           }
         }
       }
@@ -286,10 +295,11 @@ const PseudoAttacks = new Array(T.PIECE_TYPE_NB);
 const PawnAttacks = new Array(T.COLOR_NB);
 const PawnAttacksTo = new Array(T.COLOR_NB);
 
+// Initialize PseudoAttacks with BigInt arrays
 for (let pt = 0; pt < T.PIECE_TYPE_NB; pt++) {
   PseudoAttacks[pt] = new Array(T.SQUARE_NB);
   for (let sq = 0; sq < T.SQUARE_NB; sq++) {
-    PseudoAttacks[pt][sq] = new Bitboard();
+    PseudoAttacks[pt][sq] = 0n;
   }
 }
 
@@ -297,8 +307,8 @@ for (let c = 0; c < T.COLOR_NB; c++) {
   PawnAttacks[c] = new Array(T.SQUARE_NB);
   PawnAttacksTo[c] = new Array(T.SQUARE_NB);
   for (let sq = 0; sq < T.SQUARE_NB; sq++) {
-    PawnAttacks[c][sq] = new Bitboard();
-    PawnAttacksTo[c][sq] = new Bitboard();
+    PawnAttacks[c][sq] = 0n;
+    PawnAttacksTo[c][sq] = 0n;
   }
 }
 
@@ -311,43 +321,43 @@ function square_bb(sq) {
 }
 
 function rank_bb(r) {
-  return Rank0BB.shl(T.FILE_NB * r);
+  return Rank0BB << BigInt(T.FILE_NB * r);
 }
 
 function file_bb(f) {
-  return FileABB.shl(f);
+  return FileABB << BigInt(f);
 }
 
 function more_than_one(b) {
-  return b.and(b.sub(new Bitboard(1, 0))).toBool();
+  return b & (b - 1n);
 }
 
 function shift(b, d) {
-  if (d === T.NORTH) return b.and(Rank9BB.not()).shl(T.NORTH);
-  if (d === T.SOUTH) return b.shr(T.NORTH);
-  if (d === T.EAST) return b.and(FileIBB.not()).shl(T.EAST);
-  if (d === T.WEST) return b.and(FileABB.not()).shr(T.WEST);
-  if (d === T.NORTH_EAST) return shift(shift(b, T.NORTH), T.EAST);
-  if (d === T.SOUTH_EAST) return shift(shift(b, T.SOUTH), T.EAST);
-  if (d === T.SOUTH_WEST) return shift(shift(b, T.SOUTH), T.WEST);
-  if (d === T.NORTH_WEST) return shift(shift(b, T.NORTH), T.WEST);
-  return new Bitboard();
+  if (d === T.NORTH) return (b & ~Rank9BB) << 9n;
+  if (d === T.SOUTH) return b >> 9n;
+  if (d === T.EAST) return (b & ~FileIBB) << 1n;
+  if (d === T.WEST) return (b & ~FileABB) >> 1n;
+  if (d === T.NORTH_EAST) return ((b & ~Rank9BB) << 9n & ~FileIBB) << 1n;
+  if (d === T.SOUTH_EAST) return (b >> 9n & ~FileIBB) << 1n;
+  if (d === T.SOUTH_WEST) return (b >> 9n & ~FileABB) >> 1n;
+  if (d === T.NORTH_WEST) return ((b & ~Rank9BB) << 9n & ~FileABB) >> 1n;
+  return 0n;
 }
 
 function pawn_attacks_bb(c, sq) {
-  let b = Bitboard.square(sq);
-  let attack = shift(b, c === T.WHITE ? T.NORTH : T.SOUTH);
+  const sqBit = 1n << BigInt(sq);
+  const attack = shift(sqBit, c === T.WHITE ? T.NORTH : T.SOUTH);
   if ((c === T.WHITE && T.rank_of(sq) > T.RANK_4) || (c === T.BLACK && T.rank_of(sq) < T.RANK_5)) {
-    attack = attack.or(shift(b, T.WEST)).or(shift(b, T.EAST));
+    return attack | shift(sqBit, T.WEST) | shift(sqBit, T.EAST);
   }
   return attack;
 }
 
 function pawn_attacks_to_bb(c, sq) {
-  let b = Bitboard.square(sq);
-  let attack = shift(b, c === T.WHITE ? T.SOUTH : T.NORTH);
+  const sqBit = 1n << BigInt(sq);
+  const attack = shift(sqBit, c === T.WHITE ? T.SOUTH : T.NORTH);
   if ((c === T.WHITE && T.rank_of(sq) > T.RANK_4) || (c === T.BLACK && T.rank_of(sq) < T.RANK_5)) {
-    attack = attack.or(shift(b, T.WEST)).or(shift(b, T.EAST));
+    return attack | shift(sqBit, T.WEST) | shift(sqBit, T.EAST);
   }
   return attack;
 }
@@ -361,7 +371,7 @@ function between_bb(s1, s2) {
 }
 
 function aligned(s1, s2, s3) {
-  return line_bb(s1, s2).test(s3);
+  return (line_bb(s1, s2) & (1n << BigInt(s3))) !== 0n;
 }
 
 function distance(s1, s2) {
@@ -369,19 +379,39 @@ function distance(s1, s2) {
 }
 
 function popcount(b) {
-  return b.popcount();
+  if (b === 0n) return 0;
+  let count = 0;
+  let n = b;
+  while (n > 0n) {
+    n &= n - 1n;
+    count++;
+  }
+  return count;
 }
 
 function lsb(b) {
-  return b.lsb();
+  // Get position of least significant bit for BigInt
+  if (b === 0n) return -1;
+  const bit = b & -b; // isolate LSB
+  let count = 0;
+  let n = bit;
+  while (n > 1n) {
+    n >>= 1n;
+    count++;
+  }
+  return count;
 }
 
 function least_significant_square_bb(b) {
   return square_bb(lsb(b));
 }
 
+// Pop least significant bit - returns [square, newBitboard]
+// Since JS passes primitives by value, we must return the modified bitboard
 function pop_lsb(b) {
-  return b.poplsb();
+  const sq = lsb(b);
+  const newB = b ^ (1n << BigInt(sq));
+  return [sq, newB];
 }
 
 // ==============================================
@@ -398,15 +428,15 @@ const KnightToAttacks = new Array(T.SQUARE_NB);
 function init_attacks() {
   // Initialize KnightToAttacks first
   for (let sq = 0; sq < T.SQUARE_NB; sq++) {
-    KnightToAttacks[sq] = new Bitboard();
+    KnightToAttacks[sq] = 0n;
   }
   
   // Initialize attack tables for all pieces
   for (let sq = 0; sq < T.SQUARE_NB; sq++) {
-    RookAttacks[sq] = new Bitboard();
-    CannonAttacks[sq] = new Bitboard();
-    BishopAttacks[sq] = new Bitboard();
-    KnightAttacks[sq] = new Bitboard();
+    RookAttacks[sq] = 0n;
+    CannonAttacks[sq] = 0n;
+    BishopAttacks[sq] = 0n;
+    KnightAttacks[sq] = 0n;
     
     // Knight moves
     const knightOffsets = [
@@ -423,9 +453,9 @@ function init_attacks() {
     for (let offset of knightOffsets) {
       let to = sq + offset;
       if (T.is_ok(to) && SquareDistance[sq][to] === 2) {
-        KnightAttacks[sq].set(to);
+        KnightAttacks[sq] |= (1n << BigInt(to));
         // KnightToAttacks is the opposite - squares that can attack this square with knight
-        KnightToAttacks[to].set(sq);
+        KnightToAttacks[to] |= (1n << BigInt(sq));
       }
     }
     
@@ -440,30 +470,24 @@ function init_attacks() {
     for (let offset of bishopOffsets) {
       let to = sq + offset;
       if (T.is_ok(to)) {
-        let f = T.file_of(sq);
-        let r = T.rank_of(sq);
-        let tf = T.file_of(to);
+        // Check if in own half
         let tr = T.rank_of(to);
-        
-        // Check if middle square is empty (for checking in later)
-        let midSq = sq + offset / 2;
-        // And check it's in own half
-        let halfOk = (T.color_of(T.WHITE) === T.WHITE && tr <= T.RANK_4) || 
-                     (T.color_of(T.WHITE) === T.BLACK && tr >= T.RANK_5);
-        // Actually, let's just set all possible moves and check legality later
-        BishopAttacks[sq].set(to);
+        let halfOk = (tr <= T.RANK_4) || (tr >= T.RANK_5);
+        if (halfOk) {
+          BishopAttacks[sq] |= (1n << BigInt(to));
+        }
       }
     }
   }
 }
 
 function attacks_bb_sliding(sq, occupied, dirs) {
-  let attacks = new Bitboard();
+  let attacks = 0n;
   for (let d of dirs) {
     let s = sq + d;
     while (T.is_ok(s)) {
-      attacks.set(s);
-      if (occupied.test(s)) break;
+      attacks |= (1n << BigInt(s));
+      if (occupied & (1n << BigInt(s))) break;
       s += d;
     }
   }
@@ -475,7 +499,7 @@ function attacks_bb_rook(sq, occupied) {
 }
 
 function attacks_bb_cannon(sq, occupied) {
-  let attacks = new Bitboard();
+  let attacks = 0n;
   const dirs = [T.NORTH, T.SOUTH, T.EAST, T.WEST];
   
   for (let d of dirs) {
@@ -483,12 +507,12 @@ function attacks_bb_cannon(sq, occupied) {
     let jumped = false;
     while (T.is_ok(s)) {
       if (!jumped) {
-        if (occupied.test(s)) {
+        if (occupied & (1n << BigInt(s))) {
           jumped = true;
         }
       } else {
-        if (occupied.test(s)) {
-          attacks.set(s);
+        if (occupied & (1n << BigInt(s))) {
+          attacks |= (1n << BigInt(s));
           break;
         }
       }
@@ -504,7 +528,7 @@ function attacks_bb(pt, sq, occupied) {
     case T.CANNON: return attacks_bb_cannon(sq, occupied);
     case T.BISHOP: return BishopAttacks[sq];
     case T.KNIGHT: return KnightAttacks[sq];
-    default: return new Bitboard();
+    default: return 0n;
   }
 }
 
@@ -525,7 +549,7 @@ function pretty(b) {
   for (let r = T.RANK_9; r >= T.RANK_0; r--) {
     for (let f = T.FILE_A; f <= T.FILE_I; f++) {
       let sq = T.make_square(f, r);
-      s += b.test(sq) ? "| X " : "|   ";
+      s += (b & (1n << BigInt(sq))) ? "| X " : "|   ";
     }
     s += "| " + r + "\n+---+---+---+---+---+---+---+---+---+\n";
   }

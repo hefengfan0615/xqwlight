@@ -2,6 +2,7 @@
 
 const T = require('./types.js');
 const B = require('./bitboard.js');
+const PSQT = require('./psqt.js');
 
 // ==============================================
 // Zobrist hashing keys
@@ -12,65 +13,51 @@ const Zobrist = {
   side: 0
 };
 
-// Initialize Zobrist keys with a simple PRNG
 function init_zobrist() {
   let seed = 1070372;
-  function prng() {
-    seed = seed * 1103515245 + 12345;
-    return seed;
+  function rand() {
+    seed = (seed * 6364136223846793005 + 1442695040888963407) >>> 0;
+    const high = (seed * 6364136223846793005 + 1442695040888963407) >>> 0;
+    return BigInt(seed) | (BigInt(high) << 32n);
   }
   
-  for (let pc = 0; pc < T.PIECE_NB; pc++) {
+  const pieces = [T.W_ROOK, T.W_ADVISOR, T.W_CANNON, T.W_PAWN, T.W_KNIGHT, T.W_BISHOP, T.W_KING,
+                  T.B_ROOK, T.B_ADVISOR, T.B_CANNON, T.B_PAWN, T.B_KNIGHT, T.B_BISHOP, T.B_KING];
+  
+  for (const pc of pieces) {
     Zobrist.psq[pc] = new Array(T.SQUARE_NB);
     for (let sq = 0; sq < T.SQUARE_NB; sq++) {
-      Zobrist.psq[pc][sq] = prng() + '_' + prng(); // Use string to simulate 64-bit key
+      Zobrist.psq[pc][sq] = rand();
     }
   }
-  Zobrist.side = prng() + '_' + prng();
+  Zobrist.side = rand();
 }
 
 // ==============================================
-// StateInfo - for undoing moves
+// StateInfo
 // ==============================================
 
 class StateInfo {
   constructor() {
-    this.key = '';
-    this.materialKey = '';
-    this.checkersBB = new B.Bitboard();
-    this.blockersForKing = new Array(T.COLOR_NB);
-    this.pinners = new Array(T.COLOR_NB);
-    this.checkSquares = new Array(T.PIECE_TYPE_NB);
-    for (let c = 0; c < T.COLOR_NB; c++) {
-      this.blockersForKing[c] = new B.Bitboard();
-      this.pinners[c] = new B.Bitboard();
-    }
-    for (let pt = 0; pt < T.PIECE_TYPE_NB; pt++) {
-      this.checkSquares[pt] = new B.Bitboard();
-    }
-    this.needSlowCheck = false;
-    this.capturedPiece = T.NO_PIECE;
+    this.key = 0n;
+    this.materialKey = 0n;
+    this.material = [0, 0];
+    this.check10 = [0, 0];
     this.rule60 = 0;
     this.pliesFromNull = 0;
+    this.checkersBB = 0n;
     this.previous = null;
+    this.blockersForKing = [0n, 0n];
+    this.pinners = [0n, 0n];
+    this.checkSquares = new Array(T.PIECE_TYPE_NB).fill(0n);
+    this.needSlowCheck = false;
+    this.capturedPiece = T.NO_PIECE;
   }
   
   clone() {
     const st = new StateInfo();
-    st.key = this.key;
-    st.materialKey = this.materialKey;
-    st.checkersBB = this.checkersBB.clone();
-    for (let c = 0; c < T.COLOR_NB; c++) {
-      st.blockersForKing[c] = this.blockersForKing[c].clone();
-      st.pinners[c] = this.pinners[c].clone();
-    }
-    for (let pt = 0; pt < T.PIECE_TYPE_NB; pt++) {
-      st.checkSquares[pt] = this.checkSquares[pt].clone();
-    }
-    st.needSlowCheck = this.needSlowCheck;
-    st.capturedPiece = this.capturedPiece;
-    st.rule60 = this.rule60;
-    st.pliesFromNull = this.pliesFromNull;
+    Object.assign(st, this);
+    st.checkSquares = [...this.checkSquares];
     return st;
   }
 }
@@ -82,121 +69,94 @@ class StateInfo {
 class Position {
   constructor() {
     this.board = new Array(T.SQUARE_NB).fill(T.NO_PIECE);
-    this.byTypeBB = new Array(T.PIECE_TYPE_NB);
-    this.byColorBB = new Array(T.COLOR_NB);
-    for (let pt = 0; pt < T.PIECE_TYPE_NB; pt++) {
-      this.byTypeBB[pt] = new B.Bitboard();
-    }
-    for (let c = 0; c < T.COLOR_NB; c++) {
-      this.byColorBB[c] = new B.Bitboard();
-    }
+    this.byTypeBB = new Array(T.PIECE_TYPE_NB).fill(0n);
+    this.byColorBB = [0n, 0n];
     this.pieceCount = new Array(T.PIECE_NB).fill(0);
     this.sideToMove = T.WHITE;
     this.gamePly = 0;
-    this.psq = 0; // Piece square table score (placeholder)
+    this.psq = 0;
     this.st = new StateInfo();
-    this.history = [];
   }
   
-  // Initialize position from FEN string
-  set(fenStr, st) {
-    // Clear the board
-    this.board = new Array(T.SQUARE_NB).fill(T.NO_PIECE);
-    for (let pt = 0; pt < T.PIECE_TYPE_NB; pt++) {
-      this.byTypeBB[pt] = new B.Bitboard();
-    }
-    for (let c = 0; c < T.COLOR_NB; c++) {
-      this.byColorBB[c] = new B.Bitboard();
-    }
-    this.pieceCount = new Array(T.PIECE_NB).fill(0);
-    this.st = st || new StateInfo();
+  set(fenStr, si) {
+    // Clear all
+    this.board.fill(T.NO_PIECE);
+    this.byTypeBB.fill(0n);
+    this.byColorBB = [0n, 0n];
+    this.pieceCount.fill(0);
+    this.psq = 0;
+    this.sideToMove = T.WHITE;
+    this.gamePly = 0;
     
-    const tokens = fenStr.split(/\s+/);
+    const tokens = fenStr.trim().split(/\s+/);
     let idx = 0;
-    let rank = T.RANK_9;
-    let file = T.FILE_A;
+    let sq = T.SQ_A9;
+    
+    const PieceToChar = " RACPNBK racpnbk";
     
     // Parse piece placement
     while (idx < tokens[0].length) {
       const c = tokens[0][idx];
-      if (c === '/') {
-        rank--;
-        file = T.FILE_A;
-      } else if (c >= '1' && c <= '9') {
-        file += parseInt(c);
+      if (c >= '1' && c <= '9') {
+        sq += (parseInt(c)) * T.EAST;
+      } else if (c === '/') {
+        sq += 2 * T.SOUTH;
       } else {
-        // Parse piece
-        const piece = this.char_to_piece(c);
-        if (piece !== T.NO_PIECE) {
-          this.put_piece(piece, T.make_square(file, rank));
+        const charIdx = PieceToChar.indexOf(c);
+        if (charIdx !== -1) {
+          this.put_piece(charIdx, sq);
+          sq++;
         }
-        file++;
       }
       idx++;
     }
     
     // Parse active color
     if (tokens.length > 1) {
-      this.sideToMove = tokens[1] === 'b' ? T.BLACK : T.WHITE;
+      this.sideToMove = tokens[1] === 'w' ? T.WHITE : T.BLACK;
     }
     
-    // Parse halfmove and fullmove (simplified)
+    // Parse halfmove and fullmove
     if (tokens.length > 4) {
       this.st.rule60 = parseInt(tokens[4]) || 0;
     }
     if (tokens.length > 5) {
-      this.gamePly = 2 * (parseInt(tokens[5]) || 1) - (this.sideToMove === T.BLACK ? 2 : 1);
+      let fullmove = parseInt(tokens[5]) || 1;
+      this.gamePly = Math.max(2 * (fullmove - 1), 0) + (this.sideToMove === T.BLACK ? 1 : 0);
     }
     
+    this.st = si || new StateInfo();
     this.set_state(this.st);
+    
     return this;
   }
   
-  // Generate FEN string
   fen() {
+    const PieceToChar = " RACPNBK racpnbk";
     let s = '';
+    
     for (let r = T.RANK_9; r >= T.RANK_0; r--) {
-      let empty = 0;
+      let emptyCnt = 0;
       for (let f = T.FILE_A; f <= T.FILE_I; f++) {
         const sq = T.make_square(f, r);
-        const pc = this.board[sq];
-        if (pc === T.NO_PIECE) {
-          empty++;
+        if (this.empty(sq)) {
+          emptyCnt++;
         } else {
-          if (empty > 0) {
-            s += empty;
-            empty = 0;
+          if (emptyCnt) {
+            s += emptyCnt;
+            emptyCnt = 0;
           }
-          s += this.piece_to_char(pc);
+          s += PieceToChar[this.board[sq]];
         }
       }
-      if (empty > 0) {
-        s += empty;
-      }
-      if (r > T.RANK_0) {
-        s += '/';
-      }
+      if (emptyCnt) s += emptyCnt;
+      if (r > T.RANK_0) s += '/';
     }
-    s += ' ' + (this.sideToMove === T.WHITE ? 'w' : 'b');
-    s += ' - - ' + this.st.rule60 + ' ' + Math.floor((this.gamePly + 1) / 2);
+    
+    s += this.sideToMove === T.WHITE ? ' w ' : ' b ';
+    s += '- - ' + this.st.rule60 + ' ' + (1 + (this.gamePly - (this.sideToMove === T.BLACK ? 1 : 0)) / 2);
+    
     return s;
-  }
-  
-  // Helper to convert piece to FEN character
-  piece_to_char(pc) {
-    const pieceChars = ' KACPNBR kacpnbr';
-    return pieceChars[pc] || '?';
-  }
-  
-  // Helper to convert FEN character to piece
-  char_to_piece(c) {
-    const pieceMap = {
-      'K': T.W_KING, 'A': T.W_ADVISOR, 'B': T.W_BISHOP,
-      'N': T.W_KNIGHT, 'R': T.W_ROOK, 'C': T.W_CANNON, 'P': T.W_PAWN,
-      'k': T.B_KING, 'a': T.B_ADVISOR, 'b': T.B_BISHOP,
-      'n': T.B_KNIGHT, 'r': T.B_ROOK, 'c': T.B_CANNON, 'p': T.B_PAWN
-    };
-    return pieceMap[c] || T.NO_PIECE;
   }
   
   // Put a piece on a square
@@ -205,12 +165,13 @@ class Position {
     const pt = T.type_of(pc);
     const c = T.color_of(pc);
     
-    this.byTypeBB[pt].set(sq);
-    this.byTypeBB[T.ALL_PIECES].set(sq);
-    this.byColorBB[c].set(sq);
+    this.byTypeBB[T.ALL_PIECES] |= (1n << BigInt(sq));
+    this.byTypeBB[pt] |= (1n << BigInt(sq));
+    this.byColorBB[c] |= (1n << BigInt(sq));
     
     this.pieceCount[pc]++;
     this.pieceCount[T.make_piece(c, T.ALL_PIECES)]++;
+    this.psq += PSQT.psq_score(pc, sq);
   }
   
   // Remove a piece from a square
@@ -219,34 +180,36 @@ class Position {
     const pt = T.type_of(pc);
     const c = T.color_of(pc);
     
-    this.byTypeBB[pt].clear(sq);
-    this.byTypeBB[T.ALL_PIECES].clear(sq);
-    this.byColorBB[c].clear(sq);
+    const sqBit = 1n << BigInt(sq);
+    this.byTypeBB[T.ALL_PIECES] ^= sqBit;
+    this.byTypeBB[pt] ^= sqBit;
+    this.byColorBB[c] ^= sqBit;
     
     this.board[sq] = T.NO_PIECE;
-    
     this.pieceCount[pc]--;
     this.pieceCount[T.make_piece(c, T.ALL_PIECES)]--;
+    this.psq -= PSQT.psq_score(pc, sq);
   }
   
   // Move a piece
   move_piece(from, to) {
     const pc = this.board[from];
-    this.remove_piece(from);
-    this.put_piece(pc, to);
+    const pt = T.type_of(pc);
+    const c = T.color_of(pc);
+    
+    const fromToBit = (1n << BigInt(from)) | (1n << BigInt(to));
+    this.byTypeBB[T.ALL_PIECES] ^= fromToBit;
+    this.byTypeBB[pt] ^= fromToBit;
+    this.byColorBB[c] ^= fromToBit;
+    
+    this.board[from] = T.NO_PIECE;
+    this.board[to] = pc;
+    this.psq += PSQT.psq_score(pc, to) - PSQT.psq_score(pc, from);
   }
   
-  // Get piece on a square
-  piece_on(sq) {
-    return this.board[sq];
-  }
+  piece_on(sq) { return this.board[sq]; }
+  empty(sq) { return this.board[sq] === T.NO_PIECE; }
   
-  // Check if square is empty
-  empty(sq) {
-    return this.board[sq] === T.NO_PIECE;
-  }
-  
-  // Get color's pieces bitboard
   pieces(ptOrColor, pt) {
     if (typeof pt === 'undefined') {
       if (typeof ptOrColor === 'undefined') {
@@ -256,368 +219,306 @@ class Position {
         ? this.byColorBB[ptOrColor] 
         : this.byTypeBB[ptOrColor];
     } else {
-      // Both color and piece type specified
-      return this.byColorBB[ptOrColor].and(this.byTypeBB[pt]);
+      return this.byColorBB[ptOrColor] & this.byTypeBB[pt];
     }
   }
   
-  // Check if move gives check (simplified)
-  gives_check(m) {
-    const from = T.from_sq(m);
-    const to = T.to_sq(m);
-    const pc = this.piece_on(from);
-    const us = this.sideToMove;
-    const them = ~us & 1;
-    const ksq = this.square(T.KING, them);
-    
-    // Make move on a copy
-    this.do_move(m);
-    const result = this.attackers_to(ksq, us).toBool();
-    this.undo_move(m);
-    return result;
-  }
-  
-  // Make a move
-  do_move(m, newSt) {
-    const from = T.from_sq(m);
-    const to = T.to_sq(m);
-    const pc = this.board[from];
-    
-    // Save state for undo
-    const st = newSt || new StateInfo();
-    st.previous = this.st;
-    st.rule60 = this.st.rule60 + 1;
-    st.pliesFromNull = this.st.pliesFromNull + 1;
-    st.capturedPiece = this.board[to];
-    
-    this.history.push(this.st);
-    this.st = st;
-    
-    // Capture piece if any
-    if (st.capturedPiece !== T.NO_PIECE) {
-      this.remove_piece(to);
-      st.rule60 = 0;
+  count(pt, c) {
+    if (typeof c === 'undefined') {
+      return this.count(pt, T.WHITE) + this.count(pt, T.BLACK);
     }
-    
-    // Move piece
-    this.move_piece(from, to);
-    
-    // Switch sides
-    this.sideToMove = ~this.sideToMove & 1;
-    this.gamePly++;
-    
-    // Update check info
-    this.set_state(st);
-    
-    return true;
+    return this.pieceCount[T.make_piece(c, pt)];
   }
   
-  // Undo a move
-  undo_move(m) {
-    const from = T.from_sq(m);
-    const to = T.to_sq(m);
-    const pc = this.board[to];
-    const captured = this.st.capturedPiece;
-    
-    // Move piece back
-    this.move_piece(to, from);
-    
-    // Restore captured piece
-    if (captured !== T.NO_PIECE) {
-      this.put_piece(captured, to);
-    }
-    
-    // Restore state
-    this.st = this.history.pop();
-    
-    // Switch sides back
-    this.sideToMove = ~this.sideToMove & 1;
-    this.gamePly--;
-  }
-  
-  // Find square of a piece
   square(pt, c) {
-    let b = this.pieces(c, pt);
-    if (b.toBool()) {
+    const b = this.byColorBB[c] & this.byTypeBB[pt];
+    if (b !== 0n) {
       return B.lsb(b);
     }
     return T.SQ_NONE;
   }
   
-  // Check for legal move (simplified)
-  legal(m) {
-    if (!T.is_ok_move(m)) return false;
+  side_to_move() { return this.sideToMove; }
+  psq_score() { return this.psq; }
+  
+  // Checking
+  checkers() { return this.st.checkersBB; }
+  in_check() { return this.st.checkersBB !== 0n; }
+  check_squares(pt) { return this.st.checkSquares[pt]; }
+  blockers_for_king(c) { return this.st.blockersForKing[c]; }
+  pinners(c) { return this.st.pinners[c]; }
+  
+  // Attacks
+  attackers_to(s, occupied) {
+    if (typeof occupied === 'undefined') {
+      occupied = this.byTypeBB[T.ALL_PIECES];
+    }
     
+    return (B.pawn_attacks_to_bb(T.WHITE, s) & this.byColorBB[T.WHITE] & this.byTypeBB[T.PAWN])
+         | (B.pawn_attacks_to_bb(T.BLACK, s) & this.byColorBB[T.BLACK] & this.byTypeBB[T.PAWN])
+         | (B.attacks_bb(T.KNIGHT, s, occupied) & this.byTypeBB[T.KNIGHT])
+         | (B.attacks_bb(T.ROOK, s, occupied) & this.byTypeBB[T.ROOK])
+         | (B.attacks_bb(T.CANNON, s, occupied) & this.byTypeBB[T.CANNON])
+         | (B.attacks_bb(T.BISHOP, s, occupied) & this.byTypeBB[T.BISHOP])
+         | (B.PseudoAttacks[T.ADVISOR][s] & this.byTypeBB[T.ADVISOR])
+         | (B.PseudoAttacks[T.KING][s] & this.byTypeBB[T.KING]);
+  }
+  
+  checkers_to(c, s, occupied) {
+    if (typeof occupied === 'undefined') {
+      occupied = this.byTypeBB[T.ALL_PIECES];
+    }
+    const color = c & 1; // Ensure color is 0 or 1
+    
+    return ((B.pawn_attacks_to_bb(color, s) & this.byTypeBB[T.PAWN])
+          | (B.attacks_bb(T.KNIGHT, s, occupied) & this.byTypeBB[T.KNIGHT])
+          | (B.attacks_bb(T.ROOK, s, occupied) & (this.byTypeBB[T.KING] | this.byTypeBB[T.ROOK]))
+          | (B.attacks_bb(T.CANNON, s, occupied) & this.byTypeBB[T.CANNON]))
+          & this.byColorBB[color];
+  }
+  
+  // Properties of moves
+  legal(m) {
+    const us = this.sideToMove;
     const from = T.from_sq(m);
     const to = T.to_sq(m);
-    const us = this.sideToMove;
     const pc = this.piece_on(from);
     
     if (pc === T.NO_PIECE || T.color_of(pc) !== us) return false;
     
-    const captured = this.piece_on(to);
-    if (captured !== T.NO_PIECE && T.color_of(captured) === us) return false;
-    
-    // Check legality based on piece type
-    if (!this.legal_move_for_piece(pc, from, to)) return false;
-    
-    // Make move and check if king is attacked
-    this.do_move(m);
-    const ksq = this.square(T.KING, us);
-    const inCheck = this.attackers_to(ksq, ~us & 1).toBool();
-    this.undo_move(m);
-    
-    return !inCheck;
-  }
-  
-  // Check legal move for a piece type
-  legal_move_for_piece(pc, from, to) {
+    const occupied = (this.byTypeBB[T.ALL_PIECES] ^ (1n << BigInt(from))) | (1n << BigInt(to));
     const pt = T.type_of(pc);
-    const c = T.color_of(pc);
-    const toPt = this.piece_on(to);
+    const ksq = pt === T.KING ? to : this.square(T.KING, us);
     
-    switch (pt) {
-      case T.KING:
-        return this.in_palace(to) && B.distance(from, to) === 1;
-      
-      case T.ADVISOR:
-        return this.in_palace(to) && 
-               Math.abs(T.file_of(from) - T.file_of(to)) === 1 &&
-               Math.abs(T.rank_of(from) - T.rank_of(to)) === 1;
-      
-      case T.BISHOP:
-        if (this.in_opposite_half(to, c)) return false;
-        const midX = (T.file_of(from) + T.file_of(to)) / 2;
-        const midY = (T.rank_of(from) + T.rank_of(to)) / 2;
-        const midSq = T.make_square(midX, midY);
-        return this.empty(midSq) &&
-               Math.abs(T.file_of(from) - T.file_of(to)) === 2 &&
-               Math.abs(T.rank_of(from) - T.rank_of(to)) === 2;
-      
-      case T.KNIGHT:
-        const dx = Math.abs(T.file_of(from) - T.file_of(to));
-        const dy = Math.abs(T.rank_of(from) - T.rank_of(to));
-        if (!((dx === 1 && dy === 2) || (dx === 2 && dy === 1))) {
-          return false;
-        }
-        // Check leg is not blocked
-        let legSq;
-        if (dx === 1) {
-          legSq = T.make_square(T.file_of(from), 
-                               (T.rank_of(from) + T.rank_of(to)) / 2);
-        } else {
-          legSq = T.make_square((T.file_of(from) + T.file_of(to)) / 2, 
-                               T.rank_of(from));
-        }
-        return this.empty(legSq);
-      
-      case T.ROOK:
-        return this.legal_slide(from, to);
-      
-      case T.CANNON:
-        if (this.empty(to)) {
-          return this.legal_slide(from, to);
-        } else {
-          return this.legal_cannon_capture(from, to);
-        }
-      
-      case T.PAWN:
-        return this.legal_pawn_move(from, to, c);
-      
-      default:
-        return false;
+    if (!this.st.needSlowCheck && ksq !== to && !(this.st.blockersForKing[us] & (1n << BigInt(from)))) {
+      return true;
     }
+    
+    if (pt === T.KING) {
+      return !(this.checkers_to(~us & 1, to, occupied));
+    }
+    
+    return !(this.checkers_to(~us & 1, ksq, occupied) & ~(1n << BigInt(to)));
   }
   
-  // Check if slide is legal
-  legal_slide(from, to) {
-    const fromF = T.file_of(from);
-    const fromR = T.rank_of(from);
-    const toF = T.file_of(to);
-    const toR = T.rank_of(to);
+  gives_check(m) {
+    const from = T.from_sq(m);
+    const to = T.to_sq(m);
+    const ksq = this.square(T.KING, ~this.sideToMove & 1);
+    const pt = T.type_of(this.piece_on(from));
     
-    if (fromF !== toF && fromR !== toR) {
-      return false;
+    if (pt === T.CANNON) {
+      if (B.attacks_bb(T.CANNON, to, (this.byTypeBB[T.ALL_PIECES] ^ (1n << BigInt(from))) | (1n << BigInt(to))) & (1n << BigInt(ksq))) {
+        return true;
+      }
+    } else if (this.st.checkSquares[pt] & (1n << BigInt(to))) {
+      return true;
     }
     
-    // Check each square in between
-    if (fromF === toF) {
-      // Vertical move
-      const startR = Math.min(fromR, toR);
-      const endR = Math.max(fromR, toR);
-      for (let r = startR + 1; r < endR; r++) {
-        if (!this.empty(T.make_square(fromF, r))) return false;
-      }
-    } else {
-      // Horizontal move
-      const startF = Math.min(fromF, toF);
-      const endF = Math.max(fromF, toF);
-      for (let f = startF + 1; f < endF; f++) {
-        if (!this.empty(T.make_square(f, fromR))) return false;
-      }
-    }
-    
-    return true;
-  }
-  
-  // Check if cannon capture is legal
-  legal_cannon_capture(from, to) {
-    const fromF = T.file_of(from);
-    const fromR = T.rank_of(from);
-    const toF = T.file_of(to);
-    const toR = T.rank_of(to);
-    
-    if (fromF !== toF && fromR !== toR) {
-      return false;
-    }
-    
-    let count = 0;
-    
-    // Check each square in between
-    if (fromF === toF) {
-      // Vertical move
-      const startR = Math.min(fromR, toR);
-      const endR = Math.max(fromR, toR);
-      for (let r = startR + 1; r < endR; r++) {
-        if (!this.empty(T.make_square(fromF, r))) count++;
-      }
-    } else {
-      // Horizontal move
-      const startF = Math.min(fromF, toF);
-      const endF = Math.max(fromF, toF);
-      for (let f = startF + 1; f < endF; f++) {
-        if (!this.empty(T.make_square(f, fromR))) count++;
-      }
-    }
-    
-    return count === 1;
-  }
-  
-  // Check if pawn move is legal
-  legal_pawn_move(from, to, c) {
-    const forward = c === T.WHITE ? 1 : -1;
-    
-    const dx = T.file_of(to) - T.file_of(from);
-    const dy = T.rank_of(to) - T.rank_of(from);
-    
-    // Forward move
-    if (dx === 0 && dy === forward) return true;
-    
-    // Sideways move (only in enemy half)
-    if (Math.abs(dx) === 1 && dy === 0) {
-      const halfLine = c === T.WHITE ? T.RANK_5 : T.RANK_4;
-      if (c === T.WHITE && T.rank_of(from) <= halfLine) return true;
-      if (c === T.BLACK && T.rank_of(from) >= halfLine) return true;
+    if (B.attacks_bb(T.ROOK, ksq, this.byTypeBB[T.ALL_PIECES]) & this.byColorBB[this.sideToMove] & this.byTypeBB[T.CANNON]) {
+      return this.checkers_to(this.sideToMove, ksq, (this.byTypeBB[T.ALL_PIECES] ^ (1n << BigInt(from))) | (1n << BigInt(to)));
+    } else if ((this.st.blockersForKing[~this.sideToMove & 1] & (1n << BigInt(from))) && !B.aligned(from, to, ksq)) {
+      return true;
     }
     
     return false;
   }
   
-  // Check if square is in palace
-  in_palace(sq) {
-    const f = T.file_of(sq);
-    const r = T.rank_of(sq);
-    return (f >= T.FILE_D && f <= T.FILE_F) && 
-           ((r >= T.RANK_0 && r <= T.RANK_2) || (r >= T.RANK_7 && r <= T.RANK_9));
+  // Doing and undoing moves
+  do_move(m, newSt, givesCheck) {
+    if (typeof givesCheck === 'undefined') {
+      givesCheck = this.gives_check(m);
+    }
+    
+    const us = this.sideToMove;
+    const them = ~us & 1;
+    const from = T.from_sq(m);
+    const to = T.to_sq(m);
+    const pc = this.piece_on(from);
+    const captured = this.piece_on(to);
+    
+    // Copy state
+    if (newSt) {
+      this.st.materialKey = newSt.materialKey;
+      this.st.material[0] = newSt.material[0];
+      this.st.material[1] = newSt.material[1];
+      this.st.check10[0] = newSt.check10[0];
+      this.st.check10[1] = newSt.check10[1];
+      this.st.rule60 = newSt.rule60;
+      this.st.pliesFromNull = newSt.pliesFromNull;
+      this.st.previous = newSt.previous;
+    }
+    
+    this.st.previous = this.st;
+    this.st.move = m;
+    
+    ++this.gamePly;
+    this.st.rule60++;
+    ++this.st.pliesFromNull;
+    
+    if (captured) {
+      this.st.material[them] -= T.PieceValue[T.MG][captured];
+      this.remove_piece(to);
+      this.st.materialKey ^= Zobrist.psq[captured][this.pieceCount[captured]];
+      this.st.check10[0] = 0;
+      this.st.check10[1] = 0;
+      this.st.rule60 = 0;
+    }
+    
+    let k = this.st.key ^ Zobrist.side;
+    k ^= Zobrist.psq[pc][from] ^ Zobrist.psq[pc][to];
+    
+    this.move_piece(from, to);
+    
+    this.st.capturedPiece = captured;
+    this.st.key = k;
+    
+    this.st.checkersBB = givesCheck ? this.checkers_to(us, this.square(T.KING, them)) : 0n;
+    
+    this.sideToMove = them;
+    
+    this.set_check_info(this.st);
   }
   
-  // Check if square is in opposite half
-  in_opposite_half(sq, c) {
-    const r = T.rank_of(sq);
-    return (c === T.WHITE && r > T.RANK_4) ||
-           (c === T.BLACK && r < T.RANK_5);
+  undo_move(m) {
+    this.sideToMove = ~this.sideToMove & 1;
+    
+    const from = T.from_sq(m);
+    const to = T.to_sq(m);
+    
+    this.move_piece(to, from);
+    
+    if (this.st.capturedPiece !== T.NO_PIECE) {
+      this.put_piece(this.st.capturedPiece, to);
+    }
+    
+    this.st = this.st.previous;
+    --this.gamePly;
   }
   
-  // Get attackers to a square
-  attackers_to(sq, byColor) {
-    let attackers = new B.Bitboard();
-    if (typeof byColor === 'undefined') {
-      attackers = attackers.or(this.attackers_to(sq, T.WHITE));
-      attackers = attackers.or(this.attackers_to(sq, T.BLACK));
-      return attackers;
-    }
+  // Set state
+  set_state(si) {
+    si.key = 0n;
+    si.materialKey = 0n;
+    si.material[0] = 0;
+    si.material[1] = 0;
+    si.checkersBB = this.checkers_to(~this.sideToMove & 1, this.square(T.KING, this.sideToMove));
     
-    // Check pawns
-    const pawns = this.pieces(byColor, T.PAWN);
-    let b = pawns.clone();
-    while (b.toBool()) {
-      const s = B.pop_lsb(b);
-      if (B.pawn_attacks_bb(byColor, s).test(sq)) {
-        attackers.set(s);
+    this.set_check_info(si);
+    
+    let b = this.byTypeBB[T.ALL_PIECES];
+    while (b !== 0n) {
+      let sq, newB;
+      [sq, newB] = B.pop_lsb(b);
+      b = newB;
+      const pc = this.piece_on(sq);
+      si.key ^= Zobrist.psq[pc][sq];
+      
+      if (T.type_of(pc) !== T.KING) {
+        si.material[T.color_of(pc)] += T.PieceValue[T.MG][pc];
       }
     }
     
-    // Check knights
-    const knights = this.pieces(byColor, T.KNIGHT);
-    b = knights.clone();
-    while (b.toBool()) {
-      const s = B.pop_lsb(b);
-      if (B.KnightAttacks[s].test(sq)) {
-        if (this.legal_move_for_piece(T.make_piece(byColor, T.KNIGHT), s, sq)) {
-          attackers.set(s);
-        }
-      }
+    if (this.sideToMove === T.BLACK) {
+      si.key ^= Zobrist.side;
     }
     
-    // Check rooks and cannons
-    const rooks = this.pieces(byColor, T.ROOK);
-    b = rooks.clone();
-    while (b.toBool()) {
-      const s = B.pop_lsb(b);
-      if (this.legal_slide(s, sq)) {
-        attackers.set(s);
+    const pieces = [T.W_ROOK, T.W_ADVISOR, T.W_CANNON, T.W_PAWN, T.W_KNIGHT, T.W_BISHOP, T.W_KING,
+                    T.B_ROOK, T.B_ADVISOR, T.B_CANNON, T.B_PAWN, T.B_KNIGHT, T.B_BISHOP, T.B_KING];
+    
+    for (const pc of pieces) {
+      for (let cnt = 0; cnt < this.pieceCount[pc]; cnt++) {
+        si.materialKey ^= Zobrist.psq[pc][cnt];
       }
     }
+  }
+  
+  set_check_info(si) {
+    const us = this.sideToMove;
+    const them = ~us & 1;
+    const uksq = this.square(T.KING, us);
+    const oksq = this.square(T.KING, them);
     
-    const cannons = this.pieces(byColor, T.CANNON);
-    b = cannons.clone();
-    while (b.toBool()) {
-      const s = B.pop_lsb(b);
-      if (this.empty(sq)) {
-        if (this.legal_slide(s, sq)) {
-          attackers.set(s);
-        }
+    const themPieces = this.byColorBB[them];
+    const usPieces = this.byColorBB[us];
+    
+    const themResult = this.blockers_for_king(themPieces, uksq);
+    si.blockersForKing[us] = themResult.blockers;
+    si.pinners[them] = themResult.pinners;
+    
+    const usResult = this.blockers_for_king(usPieces, oksq);
+    si.blockersForKing[them] = usResult.blockers;
+    si.pinners[us] = usResult.pinners;
+    
+    si.needSlowCheck = si.checkersBB !== 0n || 
+      (B.attacks_bb(T.ROOK, uksq, this.byTypeBB[T.ALL_PIECES]) & this.byColorBB[them] & this.byTypeBB[T.CANNON]);
+    
+    si.checkSquares[T.PAWN] = B.pawn_attacks_to_bb(this.sideToMove, oksq);
+    si.checkSquares[T.KNIGHT] = B.attacks_bb(T.KNIGHT, oksq, this.byTypeBB[T.ALL_PIECES]);
+    si.checkSquares[T.CANNON] = B.attacks_bb(T.CANNON, oksq, this.byTypeBB[T.ALL_PIECES]);
+    si.checkSquares[T.ROOK] = B.attacks_bb(T.ROOK, oksq, this.byTypeBB[T.ALL_PIECES]);
+    si.checkSquares[T.ADVISOR] = 0n;
+    si.checkSquares[T.BISHOP] = 0n;
+    si.checkSquares[T.KING] = 0n;
+  }
+  
+  blockers_for_king(sliders, s) {
+    let blockers = 0n;
+    let pinners = 0n;
+    
+    const snipers = (
+      (B.attacks_bb(T.ROOK, s, this.byTypeBB[T.ALL_PIECES]) & (this.byTypeBB[T.ROOK] | this.byTypeBB[T.CANNON] | this.byTypeBB[T.KING])) |
+      (B.attacks_bb(T.KNIGHT, s, this.byTypeBB[T.ALL_PIECES]) & this.byTypeBB[T.KNIGHT])
+    ) & sliders;
+    
+    const occupancy = this.byTypeBB[T.ALL_PIECES] ^ (snipers & ~this.byTypeBB[T.CANNON]);
+    
+    let snipersCopy = snipers;
+    while (snipersCopy !== 0n) {
+      let sniperSq, newSnipers;
+      [sniperSq, newSnipers] = B.pop_lsb(snipersCopy);
+      snipersCopy = newSnipers;
+      const isCannon = T.type_of(this.piece_on(sniperSq)) === T.CANNON;
+      
+      let b;
+      if (isCannon) {
+        b = B.between_bb(s, sniperSq) & (this.byTypeBB[T.ALL_PIECES] ^ (1n << BigInt(sniperSq)));
       } else {
-        if (this.legal_cannon_capture(s, sq)) {
-          attackers.set(s);
+        b = B.between_bb(s, sniperSq) & occupancy;
+      }
+      
+      if (b !== 0n) {
+        const pop = B.popcount(b);
+        if ((!isCannon && pop <= 1) || (isCannon && pop === 2)) {
+          blockers |= b;
+          if (b & this.byColorBB[T.color_of(this.piece_on(s))]) {
+            pinners |= (1n << BigInt(sniperSq));
+          }
         }
       }
     }
     
-    return attackers;
+    return { blockers, pinners };
   }
   
-  // Generate all legal moves
+  // Move generation
   generate_moves() {
     const moves = [];
     const us = this.sideToMove;
-    const pieces = this.pieces(us);
+    let pieces = this.byColorBB[us];
     
-    let b = pieces.clone();
-    while (b.toBool()) {
-      const from = B.pop_lsb(b);
-      const pieceMoves = this.generate_piece_moves(from);
-      moves.push(...pieceMoves);
-    }
-    
-    return moves;
-  }
-  
-  // Generate moves for a piece
-  generate_piece_moves(from) {
-    const moves = [];
-    const pc = this.board[from];
-    const pt = T.type_of(pc);
-    const c = T.color_of(pc);
-    
-    for (let to = 0; to < T.SQUARE_NB; to++) {
-      if (from === to) continue;
+    while (pieces !== 0n) {
+      let from, newPieces;
+      [from, newPieces] = B.pop_lsb(pieces);
+      pieces = newPieces;
+      const pc = this.board[from];
+      const pt = T.type_of(pc);
       
-      const captured = this.piece_on(to);
-      if (captured !== T.NO_PIECE && T.color_of(captured) === c) continue;
+      // Generate pseudo-legal moves
+      const pseudoMoves = this.generate_pseudo_moves(pc, from);
       
-      if (this.legal_move_for_piece(pc, from, to)) {
-        // Make the move and check if it's legal
+      // Filter legal moves
+      for (const to of pseudoMoves) {
         const m = T.make_move(from, to);
         if (this.legal(m)) {
           moves.push(m);
@@ -628,74 +529,83 @@ class Position {
     return moves;
   }
   
-  // Set state (check info etc.)
-  set_state(st) {
-    const us = this.sideToMove;
-    const them = ~us & 1;
-    const ourKing = this.square(T.KING, us);
-    const theirKing = this.square(T.KING, them);
+  generate_pseudo_moves(pc, from) {
+    const moves = [];
+    const pt = T.type_of(pc);
+    const us = T.color_of(pc);
+    const toSq = T.to_sq;
     
-    // Find checkers
-    st.checkersBB = this.attackers_to(ourKing, them);
-    
-    // Set other check info (simplified)
-    st.checkSquares[T.PAWN] = B.pawn_attacks_to_bb(them, ourKing);
-  }
-  
-  // Check if in check
-  in_check() {
-    return this.st.checkersBB.toBool();
-  }
-  
-  // Get checkers bitboard
-  checkers() {
-    return this.st.checkersBB;
-  }
-  
-  // Count pieces of a type
-  count(pt, c) {
-    if (typeof c === 'undefined') {
-      return this.count(pt, T.WHITE) + this.count(pt, T.BLACK);
+    let attacks;
+    switch (pt) {
+      case T.KING:
+        attacks = B.PseudoAttacks[T.KING][from];
+        break;
+      case T.ADVISOR:
+        attacks = B.PseudoAttacks[T.ADVISOR][from];
+        break;
+      case T.BISHOP:
+        attacks = B.PseudoAttacks[T.BISHOP][from];
+        break;
+      case T.KNIGHT:
+        attacks = B.PseudoAttacks[T.KNIGHT][from];
+        break;
+      case T.ROOK:
+        attacks = B.attacks_bb(T.ROOK, from, this.byTypeBB[T.ALL_PIECES]);
+        break;
+      case T.CANNON:
+        attacks = B.attacks_bb(T.CANNON, from, this.byTypeBB[T.ALL_PIECES]);
+        break;
+      case T.PAWN:
+        attacks = B.pawn_attacks_bb(us, from);
+        break;
+      default:
+        return moves;
     }
-    return this.pieceCount[T.make_piece(c, pt)];
+    
+    let b = attacks;
+    while (b !== 0n) {
+      let to, newB;
+      [to, newB] = B.pop_lsb(b);
+      b = newB;
+      if (!(this.byColorBB[us] & (1n << BigInt(to)))) {
+        moves.push(to);
+      }
+    }
+    
+    return moves;
   }
   
-  // Get side to move
-  side_to_move() {
-    return this.sideToMove;
+  is_on_semiopen_file(c, s) {
+    return !(this.byColorBB[c] & this.byTypeBB[T.PAWN] & B.file_bb(s));
   }
   
   // Clone position
   clone() {
     const pos = new Position();
     pos.board = [...this.board];
-    for (let pt = 0; pt < T.PIECE_TYPE_NB; pt++) {
-      pos.byTypeBB[pt] = this.byTypeBB[pt].clone();
-    }
-    for (let c = 0; c < T.COLOR_NB; c++) {
-      pos.byColorBB[c] = this.byColorBB[c].clone();
-    }
+    pos.byTypeBB = [...this.byTypeBB];
+    pos.byColorBB = [...this.byColorBB];
     pos.pieceCount = [...this.pieceCount];
     pos.sideToMove = this.sideToMove;
     pos.gamePly = this.gamePly;
+    pos.psq = this.psq;
     pos.st = this.st.clone();
     return pos;
   }
   
   // Pretty print board
   pretty() {
-    let s = '';
+    const PieceToChar = " RACPNBK racpnbk";
+    let s = '  +---+---+---+---+---+---+---+---+---+\n';
     for (let r = T.RANK_9; r >= T.RANK_0; r--) {
-      s += '  +---+---+---+---+---+---+---+---+---+\n';
       s += r + ' |';
       for (let f = T.FILE_A; f <= T.FILE_I; f++) {
         const sq = T.make_square(f, r);
         const pc = this.piece_on(sq);
-        s += ' ' + this.piece_to_char(pc) + ' |';
+        s += ' ' + PieceToChar[pc] + ' |';
       }
-      s += '\n';
+      s += '\n  +---+---+---+---+---+---+---+---+---+\n';
     }
-    s += '  +---+---+---+---+---+---+---+---+---+\n';
     s += '    a   b   c   d   e   f   g   h   i\n';
     s += '  Side to move: ' + (this.sideToMove === T.WHITE ? 'white' : 'black') + '\n';
     s += '  FEN: ' + this.fen() + '\n';
@@ -703,7 +613,7 @@ class Position {
   }
 }
 
-// Initialize static data
+// Initialize
 function init() {
   init_zobrist();
 }

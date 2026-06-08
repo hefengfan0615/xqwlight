@@ -2,13 +2,20 @@
 
 const T = require('./types.js');
 const B = require('./bitboard.js');
-const { Position } = require('./position.js');
+const PSQT = require('./psqt.js');
+const { Position, init: initPosition } = require('./position.js');
 
 console.log('=== Simple Test ===\n');
 
-// Initialize bitboards
+// Initialize
 B.init();
 console.log('✅ Bitboards initialized');
+
+PSQT.init();
+console.log('✅ PSQT initialized');
+
+initPosition();
+console.log('✅ Position module initialized');
 
 // Create position
 const pos = new Position();
@@ -36,5 +43,11 @@ if (pos.legal(testMove)) {
   pos.undo_move(testMove);
   console.log('  Undo successful!');
 }
+
+// Generate moves
+console.log('\n✅ Generating moves...');
+const moves = pos.generate_moves();
+console.log('  Total moves:', moves.length);
+console.log('  First 5:', moves.slice(0, 5).map(m => T.from_sq(m) + '-' + T.to_sq(m)).join(', '));
 
 console.log('\n🎯 Simple test complete!');
