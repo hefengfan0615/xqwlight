@@ -21,12 +21,12 @@ console.log('Position created');
 console.log(pos.pretty());
 
 // Test thinking
-console.log('🔍 Testing search (depth 3)...');
+console.log('\n🔍 Testing search (depth 4)...');
 const limits = new Search.SearchLimits();
-limits.depth = 3;
+limits.depth = 4;
 
 const startTime = Date.now();
-const result = Search.think(pos, limits);
+const result = Search.think(pos, limits.depth);
 const endTime = Date.now();
 
 console.log(`✅ Search completed`);

@@ -1,100 +1,22 @@
 "use strict";
 
 const T = require('./types.js');
+const { Position, StateInfo } = require('./position.js');
 const Evaluate = require('./evaluate.js');
 
 // ==============================================
-// Search limits
+// Search module - complete alpha-beta search
 // ==============================================
-class SearchLimits {
-  constructor() {
-    this.time = Infinity;
-    this.nodes = Infinity;
-    this.depth = 64;
-  }
-}
 
-// ==============================================
-// Transposition table entry
-// ==============================================
-class TTEntry {
-  constructor() {
-    this.key = '';
-    this.depth = 0;
-    this.value = 0;
-    this.bound = T.BOUND_NONE;
-    this.move = T.MOVE_NONE;
-  }
-}
-
-// ==============================================
-// Search stack
-// ==============================================
-class SearchStack {
-  constructor() {
-    this.ply = 0;
-    this.currentMove = T.MOVE_NONE;
-    this.excludedMove = T.MOVE_NONE;
-  }
-}
-
-// ==============================================
-// Search module
-// ==============================================
 let nodes = 0;
 
-// Simple alpha-beta search
-function search(pos, depth, alpha, beta, stack) {
+// Quiescence search - only search tactical moves
+function quiesce(pos, alpha, beta, depth, ply) {
   nodes++;
   
-  // Check for terminal nodes
-  if (depth <= 0 || pos.in_check()) {
-    return quiesce(pos, alpha, beta);
+  if (ply > 20) { // Limit recursion depth
+    return Evaluate.evaluate(pos);
   }
-  
-  // Generate legal moves
-  const moves = pos.generate_moves();
-  
-  if (moves.length === 0) {
-    if (pos.in_check()) {
-      return T.mated_in(stack.ply);
-    } else {
-      return 0; // Draw
-    }
-  }
-  
-  let bestValue = -T.VALUE_INFINITE;
-  let bestMove = T.MOVE_NONE;
-  
-  for (const m of moves) {
-    pos.do_move(m);
-    stack.ply++;
-    
-    const value = -search(pos, depth - 1, -beta, -alpha, stack);
-    
-    pos.undo_move(m);
-    stack.ply--;
-    
-    if (value > bestValue) {
-      bestValue = value;
-      bestMove = m;
-    }
-    
-    if (value > alpha) {
-      alpha = value;
-    }
-    
-    if (alpha >= beta) {
-      break;
-    }
-  }
-  
-  return bestValue;
-}
-
-// Quiescence search
-function quiesce(pos, alpha, beta) {
-  nodes++;
   
   const standPat = Evaluate.evaluate(pos);
   
@@ -106,19 +28,19 @@ function quiesce(pos, alpha, beta) {
     alpha = standPat;
   }
   
-  // Generate tactical moves (captures, checks)
+  // Generate tactical moves (captures)
   const allMoves = pos.generate_moves();
   
   for (const m of allMoves) {
     // Only consider captures for quiescence
-    const to = T.to_sq(m);
-    if (pos.piece_on(to) === T.NO_PIECE) {
+    if (pos.empty(T.to_sq(m))) {
       continue;
     }
     
-    pos.do_move(m);
+    const st = new StateInfo();
+    pos.do_move(m, st);
     
-    const value = -quiesce(pos, -beta, -alpha);
+    const value = -quiesce(pos, -beta, -alpha, depth + 1, ply + 1);
     
     pos.undo_move(m);
     
@@ -134,31 +56,78 @@ function quiesce(pos, alpha, beta) {
   return alpha;
 }
 
-// Main search function
-function think(pos, limits = new SearchLimits()) {
+// Main alpha-beta search
+function search(pos, depth, alpha, beta) {
+  nodes++;
+  
+  // Check for terminal nodes
+  if (depth <= 0) {
+    return Evaluate.evaluate(pos); // Skip quiesce for now
+  }
+  
+  // Generate legal moves
+  const moves = pos.generate_moves();
+  
+  if (moves.length === 0) {
+    if (pos.in_check()) {
+      return -T.VALUE_MATE + nodes; // Simplified mate score
+    } else {
+      return 0; // Draw/stalemate
+    }
+  }
+  
+  let bestValue = -T.VALUE_INFINITE;
+  
+  for (const m of moves) {
+    const st = new StateInfo();
+    pos.do_move(m, st);
+    
+    const value = -search(pos, depth - 1, -beta, -alpha);
+    
+    pos.undo_move(m);
+    
+    if (value > bestValue) {
+      bestValue = value;
+    }
+    
+    if (value > alpha) {
+      alpha = value;
+    }
+    
+    if (alpha >= beta) {
+      break; // Beta cutoff
+    }
+  }
+  
+  return bestValue;
+}
+
+// Main search function - finds best move
+function think(pos, depth) {
   nodes = 0;
   let bestMove = T.MOVE_NONE;
   let bestValue = -T.VALUE_INFINITE;
   
-  const stack = new SearchStack();
-  
   const moves = pos.generate_moves();
   
   if (moves.length === 0) {
-    return { move: T.MOVE_NONE, value: pos.in_check() ? T.mated_in(0) : 0 };
+    return { 
+      move: T.MOVE_NONE, 
+      value: pos.in_check() ? -T.VALUE_MATE : 0,
+      nodes: 0 
+    };
   }
   
-  // Iterative deepening (simplified - just single depth)
-  const depth = Math.min(limits.depth, 8);
+  // Search at given depth
+  const searchDepth = Math.min(depth, 4); // Limit to avoid too long searches
   
   for (const m of moves) {
-    pos.do_move(m);
-    stack.ply++;
+    const st = new StateInfo();
+    pos.do_move(m, st);
     
-    const value = -search(pos, depth - 1, -T.VALUE_INFINITE, T.VALUE_INFINITE, stack);
+    const value = -search(pos, searchDepth - 1, -T.VALUE_INFINITE, T.VALUE_INFINITE);
     
     pos.undo_move(m);
-    stack.ply--;
     
     if (value > bestValue) {
       bestValue = value;
@@ -171,6 +140,15 @@ function think(pos, limits = new SearchLimits()) {
     value: bestValue,
     nodes: nodes
   };
+}
+
+// Search limits class
+class SearchLimits {
+  constructor() {
+    this.time = Infinity;
+    this.nodes = Infinity;
+    this.depth = 64;
+  }
 }
 
 module.exports = {
