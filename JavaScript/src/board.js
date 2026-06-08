@@ -67,9 +67,13 @@ export class Board {
 
     const style = container.style;
     style.position = "relative";
+    style.display = "block";
     style.width = BOARD_WIDTH + "px";
     style.height = BOARD_HEIGHT + "px";
-    style.background = `url(${images}board.jpg)`;
+    style.backgroundColor = "transparent";
+    style.backgroundImage = `url(${images}board.jpg)`;
+    style.backgroundRepeat = "no-repeat";
+    style.backgroundSize = BOARD_WIDTH + "px " + BOARD_HEIGHT + "px";
     const self = this;
     for (let sq = 0; sq < 256; sq++) {
       if (!IN_BOARD(sq)) {
@@ -79,11 +83,13 @@ export class Board {
       const img = document.createElement("img");
       const s = img.style;
       s.position = "absolute";
-      s.left = SQ_X(sq);
-      s.top = SQ_Y(sq);
-      s.width = SQUARE_SIZE;
-      s.height = SQUARE_SIZE;
-      s.zIndex = 0;
+      s.left = SQ_X(sq) + "px";
+      s.top = SQ_Y(sq) + "px";
+      s.width = SQUARE_SIZE + "px";
+      s.height = SQUARE_SIZE + "px";
+      s.zIndex = "1";
+      s.pointerEvents = "auto";
+      img.draggable = false;
       img.onmousedown = (function (sq_) {
         return function () { self.clickSquare(sq_); };
       })(sq);

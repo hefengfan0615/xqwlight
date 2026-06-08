@@ -4,9 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>象棋小巫师 · Pikafish 算法移植版</title>
-  <!-- 经典脚本：注入 BOOK_DAT 到 window -->
-  <script src="book.js"></script>
-  <script type="module" src="src/main.js"></script>
   <style>
     /* ===== 字体与基础重置 ===== */
     @import url("https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;800&family=JetBrains+Mono:wght@400;600&family=ZCOOL+XiaoWei&display=swap");
@@ -331,5 +328,8 @@
       </div>
     </div>
   </div>
+  <!-- 经典脚本：注入 BOOK_DAT 到 window；模块脚本在容器渲染后执行 -->
+  <script src="book.js"></script>
+  <script type="module" src="src/main.js"></script>
 </body>
 </html>

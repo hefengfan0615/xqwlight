@@ -28,7 +28,7 @@ function createOption(text, value, ie8) {
   return opt;
 }
 
-const board = new Board(container, "images/", "sounds/");
+const board = new Board(document.getElementById("container"), "images/", "sounds/");
 const search = new Search(board.pos, 18);
 board.setSearch(search);
 board.bookDat = window.BOOK_DAT || [];
@@ -44,6 +44,12 @@ const knpsEl = document.getElementById("info-knps");
 const npsEl = document.getElementById("info-nps");
 const nodesEl = document.getElementById("info-nodes");
 const timeEl = document.getElementById("info-time");
+
+// ---------- 控件 ----------
+const selMoveList = document.getElementById("selMoveList");
+const selLevel = document.getElementById("selLevel");
+const selMoveMode = document.getElementById("selMoveMode");
+const selHandicap = document.getElementById("selHandicap");
 
 function formatScore(score) {
   if (!score) return "0.00";
