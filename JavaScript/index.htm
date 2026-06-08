@@ -1,167 +1,335 @@
-<html>
-  <head>
-    <meta http-equiv="Content-Type" content="text/html; charset=gbk">
-    <title>ÏóÆåĞ¡Î×Ê¦</title>
-    <script type="text/javascript" src="book.js"></script>
-    <script type="text/javascript" src="position.js"></script>
-    <script type="text/javascript" src="search.js"></script>
-    <script type="text/javascript" src="board.js"></script>
-    <script type="text/javascript" src="cchess.js"></script>
-    <style type="text/css"><!--
-body {
-  background: url(../background.gif);
-}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>è±¡æ£‹å°å·«å¸ˆ Â· Pikafish ç®—æ³•ç§»æ¤ç‰ˆ</title>
+  <!-- ç»å…¸è„šæœ¬ï¼šæ³¨å…¥ BOOK_DAT åˆ° window -->
+  <script src="book.js"></script>
+  <script type="module" src="src/main.js"></script>
+  <style>
+    /* ===== å­—ä½“ä¸åŸºç¡€é‡ç½® ===== */
+    @import url("https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;800&family=JetBrains+Mono:wght@400;600&family=ZCOOL+XiaoWei&display=swap");
 
-span.td {
-  display: inline-block;
-}
+    :root {
+      --ink:        #1a1d23;
+      --ink-soft:   #3a3f4b;
+      --parchment:  #f4ead5;
+      --parchment-2:#e6d6ad;
+      --vermilion:  #b13a2f;
+      --vermilion-2:#7a1d1d;
+      --gold:       #c89f3c;
+      --jade:       #2d6a4f;
+      --shadow:     0 8px 24px rgba(20, 12, 4, .25);
+      --serif:      "Noto Serif SC", "Songti SC", "STSong", serif;
+      --mono:       "JetBrains Mono", "SF Mono", Consolas, monospace;
+      --display:    "ZCOOL XiaoWei", "Noto Serif SC", serif;
+    }
 
-div.label {
-  font-size: 14px;
-  padding:2px;
-}
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
 
-select {
-  font-size: 14px;
-  width: 108px;
-  padding:2px;
-}
+    body {
+      min-height: 100vh;
+      font-family: var(--serif);
+      color: var(--ink);
+      background:
+        radial-gradient(ellipse at 20% 10%, #f9efd5 0%, transparent 60%),
+        radial-gradient(ellipse at 80% 90%, #e9d39b 0%, transparent 55%),
+        linear-gradient(180deg, #f4ead5 0%, #e8d6a6 100%);
+      padding: 24px 16px 60px;
+    }
 
-option {
-  font-size: 14px;
-}
+    body::before {
+      content: "";
+      position: fixed; inset: 0;
+      background-image:
+        repeating-linear-gradient(0deg, rgba(120, 80, 30, .03) 0 2px, transparent 2px 6px),
+        repeating-linear-gradient(90deg, rgba(120, 80, 30, .03) 0 2px, transparent 2px 6px);
+      pointer-events: none;
+      z-index: 0;
+    }
 
-input.button {
-  font-size: 14px;
-  width: 108px;
-}
+    .page {
+      position: relative;
+      z-index: 1;
+      max-width: 980px;
+      margin: 0 auto;
+    }
 
-label {
-  font-size: 14px;
-}
+    /* ===== æ ‡é¢˜åŒº ===== */
+    .masthead {
+      text-align: center;
+      margin-bottom: 14px;
+    }
+    .masthead h1 {
+      font-family: var(--display);
+      font-size: 44px;
+      font-weight: 800;
+      letter-spacing: 8px;
+      margin: 0;
+      color: var(--vermilion);
+      text-shadow:
+        1px 1px 0 #f9eec9,
+        2px 2px 0 #c89f3c,
+        3px 3px 0 rgba(120, 30, 20, .35);
+    }
+    .masthead .sub {
+      margin-top: 6px;
+      font-size: 14px;
+      color: var(--ink-soft);
+      letter-spacing: 2px;
+    }
+    .masthead .sub em {
+      font-style: normal;
+      color: var(--vermilion-2);
+      font-weight: 600;
+    }
 
-    --></style>
-  </head>
-  <body>
-    <div style="text-align:center;font-size:28px;font-family:ºÚÌå">ÏóÆåĞ¡Î×Ê¦</div>
-    <div style="height:16px"></div>
-    <div style="text-align:center;white-space:nowrap">
-      <span class="td" style="margin-right:10px">
-        <div id="container"></div>
-      </span><span class="td" style="vertical-align:top;width:120px;"><div style="text-align:left">
-        <div class="label">Ë­ÏÈ×ß</div>
-        <div><select id="selMoveMode" size="3">
-          <option selected value="0">ÎÒÏÈ×ß</option>
-          <option value="1">µçÄÔÏÈ×ß</option>
-          <option value="2">²»ÓÃµçÄÔ</option>
-        </select></div>
-        <div class="label">ÏÈ×ßÈÃ×Ó</div>
-        <div><select id="selHandicap" style="padding:0px">
-          <option selected value="0">²»ÈÃ×Ó</option>
-          <option value="1">ÈÃ×óÂí</option>
-          <option value="2">ÈÃË«Âí</option>
-          <option value="3">ÈÃ¾Å×Ó</option>
-        </select></div>
-        <div style="padding-top:2px"><input type="button" class="button" value="ÖØĞÂ¿ªÊ¼" onclick="restart_click()"></div>
-        <div style="padding-top:2px"><input type="button" class="button" value="»ÚÆå" onclick="retract_click()"></div>
-        <div style="height:12px"></div>
-        <div class="label">µçÄÔË®Æ½</div>
-        <div><select id="selLevel" size="3" onchange="level_change()">
-          <option selected value="0">ÈëÃÅ</option>
-          <option value="1">ÒµÓà</option>
-          <option value="2">×¨Òµ</option>
-        </select></div>
-        <div style="height:12px"></div>
-        <div><input type="checkbox" class="checkbox" id="chkAnimated" checked onclick="board.animated = checked"><label for="chkAnimated">¶¯»­</label></input></div>
-        <div><input type="checkbox" class="checkbox" checked onclick="board.setSound(checked)"><label for="chkSound">ÒôĞ§</label></input></div>
-        <div style="height:60px"></div>
-        <div class="label">²½Öè</div>
-        <div><select id="selMoveList" size="10" style="font-family:ËÎÌå" onchange="moveList_change()">
-          <option selected value="0">=== ¿ªÊ¼ ===</option>
-        </select></div>
-      </div></span>
+    /* ===== ä¸»åŒºæ£‹ç›˜ + ä¾§æ  ===== */
+    .stage {
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      gap: 18px;
+      flex-wrap: wrap;
+    }
+
+    #container {
+      position: relative;
+      border: 6px solid #5a3a1e;
+      border-radius: 6px;
+      box-shadow: var(--shadow), inset 0 0 0 1px #c89f3c;
+      background: #efd9a7;
+    }
+
+    .panel {
+      background: linear-gradient(180deg, #faf2dc 0%, #ecdbb1 100%);
+      border: 2px solid #8a6230;
+      border-radius: 6px;
+      padding: 10px 12px;
+      box-shadow: var(--shadow);
+      min-width: 138px;
+    }
+    .panel h2 {
+      font-family: var(--display);
+      font-size: 16px;
+      letter-spacing: 3px;
+      color: var(--vermilion);
+      margin: 0 0 8px;
+      border-bottom: 1px dashed #b08a55;
+      padding-bottom: 4px;
+    }
+    .panel .label {
+      font-size: 13px;
+      color: var(--ink-soft);
+      margin: 6px 0 4px;
+    }
+    .panel select, .panel input.button {
+      width: 100%;
+      font-size: 13px;
+      font-family: var(--serif);
+      padding: 4px 6px;
+      background: #fff8e6;
+      border: 1px solid #b08a55;
+      border-radius: 3px;
+      color: var(--ink);
+    }
+    .panel input.button {
+      cursor: pointer;
+      background: linear-gradient(180deg, #f4dd9c 0%, #d9b56a 100%);
+      font-weight: 600;
+      margin-top: 4px;
+    }
+    .panel input.button:hover { background: linear-gradient(180deg, #ffe6a3 0%, #e5c277 100%); }
+    .panel input.button:active { transform: translateY(1px); }
+
+    .panel select { height: auto; }
+    #selMoveMode, #selHandicap, #selLevel { padding: 2px; }
+    .panel .chk-row { font-size: 12px; color: var(--ink-soft); margin: 3px 0; }
+
+    #selMoveList {
+      width: 100%;
+      font-family: var(--mono);
+      font-size: 12px;
+      background: #fff8e6;
+      border: 1px solid #b08a55;
+      border-radius: 3px;
+    }
+
+    /* ===== åº•éƒ¨å¼•æ“ä¿¡æ¯é¢æ¿ ===== */
+    .engine-info {
+      margin: 26px auto 0;
+      max-width: 880px;
+      background:
+        linear-gradient(180deg, #1f2330 0%, #15171f 100%);
+      border-radius: 10px;
+      padding: 16px 20px;
+      box-shadow:
+        0 12px 32px rgba(20, 12, 4, .35),
+        inset 0 0 0 1px rgba(200, 159, 60, .3);
+      color: #e6e2d0;
+      font-family: var(--mono);
+      opacity: .55;
+      transition: opacity .25s ease;
+    }
+    .engine-info.active { opacity: 1; }
+
+    .engine-info .header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .engine-info .header .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--gold);
+      box-shadow: 0 0 6px var(--gold);
+    }
+    .engine-info .header .label {
+      font-family: var(--display);
+      font-size: 14px;
+      letter-spacing: 4px;
+      color: var(--gold);
+    }
+    .engine-info .header .badge {
+      margin-left: auto;
+      font-size: 10px;
+      letter-spacing: 1px;
+      color: #8a8a8a;
+      border: 1px solid #555;
+      padding: 2px 6px;
+      border-radius: 8px;
+    }
+
+    .engine-info .grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px 14px;
+    }
+    .engine-info .cell {
+      background: rgba(255, 255, 255, .04);
+      border-left: 2px solid var(--gold);
+      padding: 6px 10px;
+      border-radius: 0 4px 4px 0;
+    }
+    .engine-info .cell .k {
+      font-size: 10px;
+      letter-spacing: 2px;
+      color: #a89878;
+      text-transform: uppercase;
+    }
+    .engine-info .cell .v {
+      font-size: 16px;
+      font-weight: 600;
+      color: #f4ead5;
+      margin-top: 2px;
+      word-break: break-all;
+    }
+    .engine-info .cell.score .v.positive { color: #7dd87d; }
+    .engine-info .cell.score .v.negative { color: #ff8a7a; }
+    .engine-info .cell.pv {
+      grid-column: 1 / -1;
+    }
+    .engine-info .cell.pv .v {
+      font-size: 13px;
+      line-height: 1.6;
+      letter-spacing: 1px;
+    }
+
+    @media (max-width: 720px) {
+      .engine-info .grid { grid-template-columns: repeat(2, 1fr); }
+      .masthead h1 { font-size: 32px; letter-spacing: 4px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="masthead">
+      <h1>è±¡æ£‹å°å·«å¸ˆ</h1>
+      <div class="sub">åŸºäº <em>Pikafish</em> ç®—æ³•ç§»æ¤ Â· MovePicker Â· Î±-Î² Â· Quiescence Â· PV</div>
     </div>
-    <script type="text/javascript"><!--
-"use strict";
 
-var STARTUP_FEN = [
-  "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w",
-  "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKAB1R w",
-  "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/R1BAKAB1R w",
-  "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/9/1C5C1/9/RN2K2NR w",
-];
+    <div class="stage">
+      <span style="display:inline-block">
+        <div id="container"></div>
+      </span>
+      <span class="panel" style="vertical-align:top;width:170px;">
+        <h2>è®¾ç½®</h2>
+        <div class="label">è°å…ˆèµ°</div>
+        <div><select id="selMoveMode" size="3">
+          <option selected value="0">æˆ‘å…ˆèµ°</option>
+          <option value="1">ç”µè„‘å…ˆèµ°</option>
+          <option value="2">ä¸ç”¨ç”µè„‘</option>
+        </select></div>
 
-function createOption(text, value, ie8) {
-  var opt = document.createElement("option");
-  opt.selected = true;
-  opt.value = value;
-  if (ie8) {
-    opt.text = text;
-  } else {
-    opt.innerHTML = text.replace(/ /g, "&nbsp;");
-  }
-  return opt;
-}
+        <div class="label">å…ˆèµ°è®©å­</div>
+        <div><select id="selHandicap" style="padding:0px">
+          <option selected value="0">ä¸è®©å­</option>
+          <option value="1">è®©å·¦é©¬</option>
+          <option value="2">è®©åŒé©¬</option>
+          <option value="3">è®©ä¹å­</option>
+        </select></div>
 
-var board = new Board(container, "images/", "sounds/");
-board.setSearch(16);
-board.millis = 10;
-board.computer = 1;
-board.onAddMove = function() {
-  var counter = (board.pos.mvList.length >> 1);
-  var space = (counter > 99 ? "    " : "   ");
-  counter = (counter > 9 ? "" : " ") + counter + ".";
-  var text = (board.pos.sdPlayer == 0 ? space : counter) + move2Iccs(board.mvLast);
-  var value = "" + board.mvLast;
-  try {
-    selMoveList.add(createOption(text, value, false));
-  } catch (e) {
-    selMoveList.add(createOption(text, value, true));
-  }
-  selMoveList.scrollTop = selMoveList.scrollHeight;
-};
+        <div style="margin-top:6px"><input type="button" class="button" value="é‡æ–°å¼€å§‹" onclick="restart_click()"></div>
+        <div style="margin-top:4px"><input type="button" class="button" value="æ‚”æ£‹" onclick="retract_click()"></div>
 
-function level_change() {
-  board.millis = Math.pow(10, selLevel.selectedIndex + 1);
-}
+        <div class="label" style="margin-top:10px">ç”µè„‘æ°´å¹³</div>
+        <div><select id="selLevel" size="3" onchange="level_change()">
+          <option selected value="0">å…¥é—¨ (10ms)</option>
+          <option value="1">ä¸šä½™ (100ms)</option>
+          <option value="2">ä¸“ä¸š (1s)</option>
+        </select></div>
 
-function restart_click() {
-  selMoveList.options.length = 1;
-  selMoveList.selectedIndex = 0;
-  board.computer = 1 - selMoveMode.selectedIndex;
-  board.restart(STARTUP_FEN[selHandicap.selectedIndex]);
-}
+        <div class="chk-row"><input type="checkbox" id="chkAnimated" checked onclick="board.animated = checked"><label for="chkAnimated">åŠ¨ç”»</label></div>
+        <div class="chk-row"><input type="checkbox" id="chkSound" checked onclick="board.setSound(checked)"><label for="chkSound">éŸ³æ•ˆ</label></div>
+      </span>
+      <span class="panel" style="vertical-align:top;width:170px;">
+        <h2>æ­¥éª¤</h2>
+        <div><select id="selMoveList" size="20" style="font-family:'JetBrains Mono',monospace" onchange="moveList_change()">
+          <option selected value="0">=== å¼€å§‹ ===</option>
+        </select></div>
+      </span>
+    </div>
 
-function retract_click() {
-  for (var i = board.pos.mvList.length; i < selMoveList.options.length; i ++) {
-    board.pos.makeMove(parseInt(selMoveList.options[i].value));
-  }
-  board.retract();
-  selMoveList.options.length = board.pos.mvList.length;
-  selMoveList.selectedIndex = selMoveList.options.length - 1;
-}
-
-function moveList_change() {
-  if (board.result == RESULT_UNKNOWN) {
-    selMoveList.selectedIndex = selMoveList.options.length - 1;
-    return;
-  }
-  var from = board.pos.mvList.length;
-  var to = selMoveList.selectedIndex;
-  if (from == to + 1) {
-    return;
-  }
-  if (from > to + 1) {
-    for (var i = to + 1; i < from; i ++) {
-      board.pos.undoMakeMove();
-    }
-  } else {
-    for (var i = from; i <= to; i ++) {
-      board.pos.makeMove(parseInt(selMoveList.options[i].value));
-    }
-  }
-  board.flushBoard();
-}
-    --></script>
-  </body>
+    <!-- ============ å¼•æ“ä¿¡æ¯é¢æ¿ ============ -->
+    <div id="info" class="engine-info">
+      <div class="header">
+        <span class="dot"></span>
+        <span class="label">ENGINE INFO</span>
+        <span class="badge">Pikafish-style Â· Î±-Î² + Quiescence</span>
+      </div>
+      <div class="grid">
+        <div class="cell">
+          <div class="k">æ·±åº¦ Depth</div>
+          <div class="v" id="info-depth">â€”</div>
+        </div>
+        <div class="cell score">
+          <div class="k">è¯„åˆ† Score</div>
+          <div class="v" id="info-score">â€”</div>
+        </div>
+        <div class="cell">
+          <div class="k">èŠ‚ç‚¹ Nodes</div>
+          <div class="v" id="info-nodes">â€”</div>
+        </div>
+        <div class="cell">
+          <div class="k">è€—æ—¶ Time</div>
+          <div class="v" id="info-time">â€”</div>
+        </div>
+        <div class="cell">
+          <div class="k">NPS</div>
+          <div class="v" id="info-nps">â€”</div>
+        </div>
+        <div class="cell">
+          <div class="k">KNPS</div>
+          <div class="v" id="info-knps">â€”</div>
+        </div>
+        <div class="cell pv">
+          <div class="k">ä¸»å˜ PV (Principal Variation)</div>
+          <div class="v" id="info-pv">ç­‰å¾…æœç´¢â€¦</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
 </html>
