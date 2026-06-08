@@ -54,6 +54,7 @@ const PieceValue = [
 
 // Piece type constants
 const NO_PIECE_TYPE = 0;
+const ALL_PIECES = 8;  // Must be separate from actual piece types
 const ROOK = 1;
 const ADVISOR = 2;
 const CANNON = 3;
@@ -61,9 +62,8 @@ const PAWN = 4;
 const KNIGHT = 5;
 const BISHOP = 6;
 const KING = 7;
-const KNIGHT_TO = 8;
-const ALL_PIECES = 0;
-const PIECE_TYPE_NB = 9;
+const KNIGHT_TO = 9;
+const PIECE_TYPE_NB = 10;
 
 // Piece constants (color << 3 | type)
 const NO_PIECE = 0;
