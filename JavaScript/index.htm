@@ -1,167 +1,426 @@
+<!DOCTYPE html>
 <html>
-  <head>
-    <meta http-equiv="Content-Type" content="text/html; charset=gbk">
-    <title>œÛ∆Â–°Œ◊ ¶</title>
-    <script type="text/javascript" src="book.js"></script>
-    <script type="text/javascript" src="position.js"></script>
-    <script type="text/javascript" src="search.js"></script>
-    <script type="text/javascript" src="board.js"></script>
-    <script type="text/javascript" src="cchess.js"></script>
-    <style type="text/css"><!--
-body {
-  background: url(../background.gif);
-}
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <title>Ë±°Ê£ãÂ∞èÂ∑´Â∏à - Pikafish JS Engine</title>
+  <style>
+    body {
+      background: #d4c5a9;
+      margin: 0;
+      padding: 10px;
+    }
 
-span.td {
-  display: inline-block;
-}
+    span.td {
+      display: inline-block;
+    }
 
-div.label {
-  font-size: 14px;
-  padding:2px;
-}
+    div.label {
+      font-size: 14px;
+      padding: 2px;
+    }
 
-select {
-  font-size: 14px;
-  width: 108px;
-  padding:2px;
-}
+    select {
+      font-size: 14px;
+      width: 108px;
+      padding: 2px;
+    }
 
-option {
-  font-size: 14px;
-}
+    option {
+      font-size: 14px;
+    }
 
-input.button {
-  font-size: 14px;
-  width: 108px;
-}
+    input.button {
+      font-size: 14px;
+      width: 108px;
+      cursor: pointer;
+    }
 
-label {
-  font-size: 14px;
-}
+    label {
+      font-size: 14px;
+    }
 
-    --></style>
-  </head>
-  <body>
-    <div style="text-align:center;font-size:28px;font-family:∫⁄ÃÂ">œÛ∆Â–°Œ◊ ¶</div>
-    <div style="height:16px"></div>
-    <div style="text-align:center;white-space:nowrap">
-      <span class="td" style="margin-right:10px">
-        <div id="container"></div>
-      </span><span class="td" style="vertical-align:top;width:120px;"><div style="text-align:left">
-        <div class="label">À≠œ»◊ﬂ</div>
+    #boardCanvas {
+      border: 2px solid #000;
+      cursor: pointer;
+    }
+
+    #selMoveList {
+      font-family: monospace;
+      width: 130px;
+    }
+
+    .info {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #333;
+    }
+
+    .status {
+      font-size: 16px;
+      font-weight: bold;
+      color: #c00;
+      margin: 4px 0;
+      height: 22px;
+    }
+  </style>
+</head>
+<body>
+  <div style="text-align:center;font-size:28px;font-family:Èªë‰Ωì,'SimHei',sans-serif">
+    Ë±°Ê£ãÂ∞èÂ∑´Â∏à
+    <div style="font-size:12px;color:#666">Pikafish JavaScript Engine</div>
+  </div>
+  <div style="height:8px"></div>
+  <div style="text-align:center;white-space:nowrap">
+    <span class="td" style="margin-right:10px">
+      <canvas id="boardCanvas" width="520" height="520"></canvas>
+      <div class="status" id="statusText"></div>
+    </span>
+    <span class="td" style="vertical-align:top;width:120px;">
+      <div style="text-align:left">
+        <div class="label">Ë∞ÅÂÖàËµ∞</div>
         <div><select id="selMoveMode" size="3">
-          <option selected value="0">Œ“œ»◊ﬂ</option>
-          <option value="1">µÁƒ‘œ»◊ﬂ</option>
-          <option value="2">≤ª”√µÁƒ‘</option>
+          <option selected value="0">ÊàëÂÖàËµ∞</option>
+          <option value="1">ÁîµËÑëÂÖàËµ∞</option>
+          <option value="2">‰∏çÁî®ÁîµËÑë</option>
         </select></div>
-        <div class="label">œ»◊ﬂ»√◊”</div>
-        <div><select id="selHandicap" style="padding:0px">
-          <option selected value="0">≤ª»√◊”</option>
-          <option value="1">»√◊Û¬Ì</option>
-          <option value="2">»√À´¬Ì</option>
-          <option value="3">»√æ≈◊”</option>
+        <div class="label">ÂÖàËµ∞ËÆ©Â≠ê</div>
+        <div><select id="selHandicap" size="3">
+          <option selected value="0">‰∏çËÆ©Â≠ê</option>
+          <option value="1">ËÆ©Â∑¶È©¨</option>
+          <option value="2">ËÆ©ÂèåÈ©¨</option>
+          <option value="3">ËÆ©‰πùÂ≠ê</option>
         </select></div>
-        <div style="padding-top:2px"><input type="button" class="button" value="÷ÿ–¬ø™ º" onclick="restart_click()"></div>
-        <div style="padding-top:2px"><input type="button" class="button" value="ª⁄∆Â" onclick="retract_click()"></div>
+        <div style="padding-top:2px">
+          <input type="button" class="button" value="ÈáçÊñ∞ÂºÄÂßã" id="btnRestart">
+        </div>
+        <div style="padding-top:2px">
+          <input type="button" class="button" value="ÊÇîÊ£ã" id="btnUndo">
+        </div>
         <div style="height:12px"></div>
-        <div class="label">µÁƒ‘ÀÆ∆Ω</div>
-        <div><select id="selLevel" size="3" onchange="level_change()">
-          <option selected value="0">»Î√≈</option>
-          <option value="1">“µ”‡</option>
-          <option value="2">◊®“µ</option>
+        <div class="label">ÁîµËÑëÊ∞¥Âπ≥</div>
+        <div><select id="selLevel" size="3">
+          <option selected value="0">ÂÖ•Èó®</option>
+          <option value="1">‰∏ö‰Ωô</option>
+          <option value="2">‰∏ì‰∏ö</option>
         </select></div>
+        <div style="height:4px"></div>
+        <div class="info" id="searchInfo"></div>
+        <div style="height:8px"></div>
+        <div><label>
+          <input type="checkbox" class="checkbox" id="chkAnimated" checked>
+          Âä®Áîª
+        </label></div>
+        <div><label>
+          <input type="checkbox" class="checkbox" id="chkSound" checked>
+          Èü≥Êïà
+        </label></div>
         <div style="height:12px"></div>
-        <div><input type="checkbox" class="checkbox" id="chkAnimated" checked onclick="board.animated = checked"><label for="chkAnimated">∂Øª≠</label></input></div>
-        <div><input type="checkbox" class="checkbox" checked onclick="board.setSound(checked)"><label for="chkSound">“Ù–ß</label></input></div>
-        <div style="height:60px"></div>
-        <div class="label">≤Ω÷Ë</div>
-        <div><select id="selMoveList" size="10" style="font-family:ÀŒÃÂ" onchange="moveList_change()">
-          <option selected value="0">=== ø™ º ===</option>
+        <div class="label">Ê≠•È™§</div>
+        <div><select id="selMoveList" size="10" style="font-family:monospace">
+          <option selected value="0">=== ÂºÄÂßã ===</option>
         </select></div>
-      </div></span>
-    </div>
-    <script type="text/javascript"><!--
-"use strict";
+      </div>
+    </span>
+  </div>
 
-var STARTUP_FEN = [
-  "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w",
-  "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKAB1R w",
-  "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/R1BAKAB1R w",
-  "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/9/1C5C1/9/RN2K2NR w",
-];
+  <script type="module">
+    import { Position } from './position.js';
+    import Search from './pikafish_search.js';
+    import { Board } from './board.js';
+    import { probeBook } from './book.js';
+    import {
+      NO_PIECE, WHITE, BLACK,
+      colorOf, typeOf, fileOf, rankOf, makeSquare,
+      fromSq, toSq, makeMove, MOVE_NONE,
+      VALUE_MATE, VALUE_DRAW,
+      ROOK, ADVISOR, CANNON, PAWN, KNIGHT, BISHOP, KING,
+    } from './pikafish_types.js';
 
-function createOption(text, value, ie8) {
-  var opt = document.createElement("option");
-  opt.selected = true;
-  opt.value = value;
-  if (ie8) {
-    opt.text = text;
-  } else {
-    opt.innerHTML = text.replace(/ /g, "&nbsp;");
-  }
-  return opt;
-}
+    // Starting FENs
+    const STARTUP_FEN = [
+      "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w",
+      "r1bakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w",
+      "r1bakab1r/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w",
+      "1nbakabn1/9/9/p1p1p1p1p/9/9/P1P1P1P1P/9/9/1NBAKABN1 w",
+    ];
 
-var board = new Board(container, "images/", "sounds/");
-board.setSearch(16);
-board.millis = 10;
-board.computer = 1;
-board.onAddMove = function() {
-  var counter = (board.pos.mvList.length >> 1);
-  var space = (counter > 99 ? "    " : "   ");
-  counter = (counter > 9 ? "" : " ") + counter + ".";
-  var text = (board.pos.sdPlayer == 0 ? space : counter) + move2Iccs(board.mvLast);
-  var value = "" + board.mvLast;
-  try {
-    selMoveList.add(createOption(text, value, false));
-  } catch (e) {
-    selMoveList.add(createOption(text, value, true));
-  }
-  selMoveList.scrollTop = selMoveList.scrollHeight;
-};
+    // Level times (ms per move)
+    const LEVEL_TIMES = [500, 2000, 8000];
+    const LEVEL_DEPTHS = [6, 12, 20];
 
-function level_change() {
-  board.millis = Math.pow(10, selLevel.selectedIndex + 1);
-}
+    // DOM elements
+    const selMoveMode = document.getElementById('selMoveMode');
+    const selHandicap = document.getElementById('selHandicap');
+    const selLevel = document.getElementById('selLevel');
+    const selMoveList = document.getElementById('selMoveList');
+    const btnRestart = document.getElementById('btnRestart');
+    const btnUndo = document.getElementById('btnUndo');
+    const chkAnimated = document.getElementById('chkAnimated');
+    const chkSound = document.getElementById('chkSound');
+    const statusText = document.getElementById('statusText');
+    const searchInfo = document.getElementById('searchInfo');
 
-function restart_click() {
-  selMoveList.options.length = 1;
-  selMoveList.selectedIndex = 0;
-  board.computer = 1 - selMoveMode.selectedIndex;
-  board.restart(STARTUP_FEN[selHandicap.selectedIndex]);
-}
+    // Game state
+    const pos = new Position();
+    const search = new Search();
+    const board = new Board('boardCanvas');
 
-function retract_click() {
-  for (var i = board.pos.mvList.length; i < selMoveList.options.length; i ++) {
-    board.pos.makeMove(parseInt(selMoveList.options[i].value));
-  }
-  board.retract();
-  selMoveList.options.length = board.pos.mvList.length;
-  selMoveList.selectedIndex = selMoveList.options.length - 1;
-}
+    let history = [];
+    let busy = false;
+    let selectedSq = -1;
+    let gameOver = false;
+    let mode = 0;       // 0=player first, 1=computer first, 2=two player
+    let level = 0;
+    let handicap = 0;
 
-function moveList_change() {
-  if (board.result == RESULT_UNKNOWN) {
-    selMoveList.selectedIndex = selMoveList.options.length - 1;
-    return;
-  }
-  var from = board.pos.mvList.length;
-  var to = selMoveList.selectedIndex;
-  if (from == to + 1) {
-    return;
-  }
-  if (from > to + 1) {
-    for (var i = to + 1; i < from; i ++) {
-      board.pos.undoMakeMove();
+    // Initialize
+    function init() {
+      mode = parseInt(selMoveMode.value);
+      level = parseInt(selLevel.value);
+      handicap = parseInt(selHandicap.value);
+
+      pos.set(STARTUP_FEN[handicap] || STARTUP_FEN[0]);
+      history = [];
+      gameOver = false;
+      selectedSq = -1;
+      board.clearSelection();
+      search.clear();
+
+      selMoveList.innerHTML = '<option selected value="0">=== ÂºÄÂßã ===</option>';
+      statusText.textContent = '';
+      searchInfo.textContent = '';
+      updateBoard();
+
+      if (mode === 1) {
+        setTimeout(() => computerMove(), 500);
+      }
     }
-  } else {
-    for (var i = from; i <= to; i ++) {
-      board.pos.makeMove(parseInt(selMoveList.options[i].value));
+
+    function updateBoard() {
+      const lastMove = history.length > 0 ? history[history.length - 1] : null;
+      board.draw(pos, lastMove);
     }
-  }
-  board.flushBoard();
-}
-    --></script>
-  </body>
+
+    // Handle canvas click
+    board.canvas.addEventListener('click', (e) => {
+      if (busy || gameOver) return;
+      if (mode !== 2 && pos.sideToMove === BLACK) return;
+
+      const rect = board.canvas.getBoundingClientRect();
+      const scaleX = board.canvas.width / rect.width;
+      const scaleY = board.canvas.height / rect.height;
+      const cx = (e.clientX - rect.left) * scaleX;
+      const cy = (e.clientY - rect.top) * scaleY;
+      const sq = board.canvasToBoard(cx, cy);
+
+      if (sq < 0 || sq >= 90) {
+        selectedSq = -1;
+        board.clearSelection();
+        updateBoard();
+        return;
+      }
+
+      const pc = pos.board[sq];
+
+      if (selectedSq >= 0) {
+        const m = makeMove(selectedSq, sq);
+        if (pos.isLegalMove(m)) {
+          doMakeMove(m);
+          selectedSq = -1;
+          board.clearSelection();
+          return;
+        }
+        // Select own piece
+        if (pc !== NO_PIECE && colorOf(pc) === pos.sideToMove) {
+          selectedSq = sq;
+          showLegalMoves(sq);
+          updateBoard();
+          return;
+        }
+        selectedSq = -1;
+        board.clearSelection();
+        updateBoard();
+        return;
+      }
+
+      if (pc !== NO_PIECE && colorOf(pc) === pos.sideToMove) {
+        selectedSq = sq;
+        showLegalMoves(sq);
+        updateBoard();
+      }
+    });
+
+    function showLegalMoves(sq) {
+      const moves = [];
+      const allLegal = [];
+      pos.generateLegalMoves(allLegal);
+      for (const m of allLegal) {
+        if (fromSq(m) === sq) moves.push(m);
+      }
+      board.selectSquare(sq, moves);
+    }
+
+    function doMakeMove(m) {
+      if (!pos.doMove(m)) return;
+      history.push(m);
+      addMoveToList(m);
+      updateBoard();
+
+      // Check game end
+      const legalMoves = [];
+      pos.generateLegalMoves(legalMoves);
+      if (legalMoves.length === 0) {
+        gameOver = true;
+        if (pos.inCheck()) {
+          const winner = pos.sideToMove === WHITE ? 'ÈªëÊñπ' : 'Á∫¢Êñπ';
+          statusText.textContent = winner + 'Ëé∑ËÉúÔºÅ';
+        } else {
+          statusText.textContent = 'ÂíåÊ£ãÔºÅ';
+        }
+        return;
+      }
+
+      // Repetition draw
+      if (pos.hasRepetition()) {
+        gameOver = true;
+        statusText.textContent = '‰∏âÊ¨°ÈáçÂ§ç - ÂíåÊ£ãÔºÅ';
+        return;
+      }
+
+      // Computer's turn
+      if (mode !== 2 && pos.sideToMove === BLACK && !gameOver) {
+        setTimeout(() => computerMove(), 100);
+      }
+    }
+
+    function addMoveToList(m) {
+      const from = fromSq(m), to = toSq(m);
+      const fromStr = String.fromCharCode(97 + fileOf(from)) + (9 - rankOf(from));
+      const toStr = String.fromCharCode(97 + fileOf(to)) + (9 - rankOf(to));
+      const moveStr = fromStr + toStr;
+
+      const opt = document.createElement('option');
+      const num = Math.floor(history.length / 2);
+      const isRed = history.length % 2 === 1;
+      const prefix = isRed ? `  ${num+1}. ` : '     ';
+      opt.text = prefix + moveStr;
+      opt.value = history.length.toString();
+      selMoveList.appendChild(opt);
+      selMoveList.selectedIndex = selMoveList.options.length - 1;
+      selMoveList.scrollTop = selMoveList.scrollHeight;
+    }
+
+    function computerMove() {
+      if (busy || gameOver) return;
+      busy = true;
+      statusText.textContent = 'ÁîµËÑëÊÄùËÄÉ‰∏≠...';
+      searchInfo.textContent = '';
+      updateBoard();
+
+      const timeMs = LEVEL_TIMES[level] || 2000;
+      const maxDepth = LEVEL_DEPTHS[level] || 10;
+
+      // Try opening book
+      if (history.length < 4) {
+        const bookMoveStr = probeBook(pos.fen());
+        if (bookMoveStr) {
+          const m = pos.moveFromString(bookMoveStr);
+          if (m !== MOVE_NONE && pos.isLegalMove(m)) {
+            busy = false;
+            statusText.textContent = '';
+            doMakeMove(m);
+            return;
+          }
+        }
+      }
+
+      // Search in an async way using setTimeout
+      setTimeout(() => {
+        const bestMove = search.search(pos, {
+          moveTime: timeMs,
+          maxDepth: maxDepth,
+        });
+
+        searchInfo.textContent = `ÊêúÁ¥¢ËäÇÁÇπ: ${search.nodes.toLocaleString()}\nÊ∑±Â∫¶: ${search.rootDepth}`;
+        busy = false;
+        statusText.textContent = '';
+
+        if (bestMove !== MOVE_NONE) {
+          doMakeMove(bestMove);
+        }
+        updateBoard();
+      }, 50);
+    }
+
+    function undoMoves(count) {
+      for (let i = 0; i < count && history.length > 0; i++) {
+        const m = history.pop();
+        pos.undoMove(m);
+      }
+      // Rebuild move list
+      selMoveList.innerHTML = '<option selected value="0">=== ÂºÄÂßã ===</option>';
+      const savedHistory = [...history];
+      history = [];
+      for (const m of savedHistory) {
+        addMoveToList(m);
+      }
+      history = savedHistory;
+      gameOver = false;
+      statusText.textContent = '';
+      selectedSq = -1;
+      board.clearSelection();
+      updateBoard();
+    }
+
+    // Button handlers
+    btnRestart.addEventListener('click', () => {
+      mode = parseInt(selMoveMode.value);
+      level = parseInt(selLevel.value);
+      handicap = parseInt(selHandicap.value);
+      init();
+    });
+
+    btnUndo.addEventListener('click', () => {
+      if (busy || history.length === 0) return;
+      const undoCount = mode !== 2 ? Math.min(2, history.length) : 1;
+      undoMoves(undoCount);
+    });
+
+    // Level change
+    selLevel.addEventListener('change', () => {
+      level = parseInt(selLevel.value);
+    });
+
+    // Mode change
+    selMoveMode.addEventListener('change', () => {
+      mode = parseInt(selMoveMode.value);
+    });
+
+    // Checkboxes
+    chkAnimated.addEventListener('change', () => {
+      board.animated = chkAnimated.checked;
+    });
+
+    chkSound.addEventListener('change', () => {
+      board.setSound(chkSound.checked);
+    });
+
+    // Move list selection
+    selMoveList.addEventListener('change', () => {
+      if (busy || gameOver) return;
+      const targetIdx = parseInt(selMoveList.value);
+      if (targetIdx === 0) return;
+
+      const currentLen = history.length;
+      if (targetIdx < currentLen) {
+        // Go back to earlier position
+        const undoCount = currentLen - targetIdx;
+        undoMoves(undoCount);
+      }
+    });
+
+    // Start
+    init();
+  </script>
+</body>
 </html>
