@@ -1,6 +1,6 @@
 /*
  * Pikafish Chinese Chess Engine - Search
- * Converted from Stockfish/Pikafish C++ search.cpp, tt.cpp, movepick.cpp
+ * Converted from Stockfish/Pikafish C++ search.cpp
  */
 
 import {
@@ -13,44 +13,69 @@ import {
   VALUE_MATED_IN_MAX_PLY, VALUE_MATE_IN_MAX_PLY, VALUE_KNOWN_WIN,
   makeScore, mgValue, egValue, SCORE_ZERO,
   colorOf, typeOf, fileOf, rankOf, makeSquare,
-  MAX_PLY, MAX_MOVES,
-  SQ_A0, SQ_NONE,
+  MAX_PLY, MAX_MOVES, SQUARE_NB,
+  SQ_NONE,
   PieceValue, MG, EG,
 } from './pikafish_types.js';
 
 import { evaluate } from './pikafish_evaluate.js';
+import { SquareBB, lsb } from './pikafish_bitboard.js';
 
 // =============== Constants ===============
-
-// Search limits
-const TIME_FOREVER = 99999999;
-
-// TT entry flags
 const BOUND_NONE  = 0;
 const BOUND_UPPER = 1;
 const BOUND_LOWER = 2;
 const BOUND_EXACT = 3;
 
-// Improving state
-const NOT_IMPROVING    = 0;
-const MAYBE_IMPROVING  = 1;
-const IMPROVING        = 2;
+// Pikafish-tuned constants
+const futi_mar = 258, redu_1 = 1237, redu_2 = 886, redu_3 = 24539;
+const st_bo_1 = 8, st_bo_2 = 332, st_bo_3 = 676, st_bo_4 = 3317;
+const Futi_1 = 186, Razo_1 = 433, Razo_2 = 436;
+const improv_1 = 4, improv_2 = 2, improv_3 = 5;
+const decre_1 = 3, decre_2 = 2, decre_5 = 5;
+const statsc_1 = 5589, decr_6 = 6145, decr_7 = 6578, decr_8 = 9, decr_9 = 24;
+const singledecre_1 = 1, singledecre_2 = 17, singledecre_3 = 2;
+const cutdecre_1 = 2, cutdecre_2 = 21, cutdecre_3 = 7;
+const futi_depth = 8;
+const Futi_cap_0 = 9, Futi_cap_1 = 196, Futi_cap_2 = 306, Futi_cap_3 = 336, Futi_cap_4 = 45;
+const Futi_cap_5 = 6, Futi_cap_6 = 8, Futi_cap_7 = 904;
+const Futi_par_1 = 142, Futi_par_2 = 165, Futi_par_3 = 60, Futi_par_4 = 28;
+const Futi_par_5 = 49, Futi_par_6 = 12;
+const lmrse_1 = 35, lmrse_2 = 4, lmrse_3 = 741, lmrse_4 = 65, lmrse_5 = 6;
+const exten_1 = 4, exten_2 = 2, exten_7 = 1, exten_8 = 10, exten_9 = 2;
+const exten_10 = 2, exten_11 = 1, exten_12 = 1, exten_13 = 1, exten_14 = 2;
+const decr_10 = 6, decr_11 = 1, decr_12 = 1, decr_13 = 1, decr_14 = 3, decr_15 = 1;
+const posr60cou = 129;
+
+// =============== Move Generation Helpers ===============
+function generateMoves(pos, list) {
+  list.splice(0, list.length);
+  for (const m of pos.generateLegalMovesFor()) list.push(m);
+}
+
+function *legalMovesIter(pos) {
+  const us = pos.sideToMove;
+  let bb = pos.pieces(us);
+  while (bb !== 0n) {
+    const from = lsb(bb);
+    bb ^= SquareBB[from];
+    const moves = pos.generateMovesForSquare(from);
+    for (const m of moves) yield m;
+  }
+}
 
 // =============== Transposition Table ===============
-
-// Cluster of 3 TT entries (like C++: Cluster of 3)
 const CLUSTER_ENTRIES = 3;
 
 class TTEntry {
   constructor() {
-    this.key16 = 0n;      // High 16 bits of key
+    this.key16 = 0n;
     this.move = MOVE_NONE;
     this.value = 0;
     this.eval = 0;
     this.depth = 0;
-    this.genBound = 0;    // generation | bound
+    this.genBound = 0;
   }
-
   clear() {
     this.key16 = 0n;
     this.move = MOVE_NONE;
@@ -63,20 +88,17 @@ class TTEntry {
 
 class TranspositionTable {
   constructor() {
-    this.entries = [];     // Flat array of TTEntry
+    this.entries = [];
     this.clusterCount = 0;
     this.generation = 0;
-    this.resize(256);     // Initial size: 256 clusters = 768 entries
+    this.resize(256);
   }
 
   resize(mbSize) {
-    // mbSize in megabytes, but we use cluster count for simplicity
-    const count = Math.max(1, mbSize * 1024); // rough clusters per MB
-    this.clusterCount = count;
+    this.clusterCount = mbSize * 1024;
     this.entries = [];
-    for (let i = 0; i < count * CLUSTER_ENTRIES; i++) {
+    for (let i = 0; i < this.clusterCount * CLUSTER_ENTRIES; i++)
       this.entries.push(new TTEntry());
-    }
   }
 
   clear() {
@@ -84,20 +106,16 @@ class TranspositionTable {
     for (const e of this.entries) e.clear();
   }
 
-  // Get first entry of the cluster for key
   clusterIndex(key) {
     return Number(key % BigInt(this.clusterCount)) * CLUSTER_ENTRIES;
   }
 
-  // Probe: return TT entry if found
   probe(key, ttHit) {
     const key16 = key >> 48n;
     const idx = this.clusterIndex(key);
-
     for (let i = 0; i < CLUSTER_ENTRIES; i++) {
       const e = this.entries[idx + i];
       if (e.key16 === key16) {
-        // Refresh generation
         e.genBound = (this.generation << 2) | (e.genBound & 3);
         if (ttHit) ttHit.value = true;
         return e;
@@ -107,52 +125,34 @@ class TranspositionTable {
     return null;
   }
 
-  // Store: write into TT, replacing entries by age/depth strategy
-  store(key, move, value, evalVal, depth, bound) {
+  store(key, move, value, evalVal, depth, bound, genBoundPv) {
     const key16 = key >> 48n;
     const idx = this.clusterIndex(key);
-
-    // Find entry to replace: prefer empty, then same key, then lowest depth
     let replaceIdx = idx;
-    let replaceDepth = -999;
+    let replaceScore = -Infinity;
 
     for (let i = 0; i < CLUSTER_ENTRIES; i++) {
       const e = this.entries[idx + i];
       const eGen = e.genBound >> 2;
-      const eBound = e.genBound & 3;
+      const age = (this.generation - eGen) & 0xFF;
 
       if (e.key16 === 0n || e.key16 === key16) {
-        // Empty or same key: use this
         replaceIdx = idx + i;
         break;
       }
 
-      // Age-based replacement: prefer entries from older generation
-      // or same generation but lower depth
-      const age = (this.generation - eGen) & 0xFF;
-      const eDepth = (e.depth - 4 * (age > 3 ? 1 : 0));
-      if (eDepth < replaceDepth) {
-        replaceDepth = eDepth;
+      const score = (e.depth - 4 * (age > 3 ? 1 : 0)) - age;
+      if (score < replaceScore) {
+        replaceScore = score;
         replaceIdx = idx + i;
-      } else if (age > 0) {
-        // Slightly prefer older entries
-        const adjustedDepth = eDepth - age;
-        if (adjustedDepth < replaceDepth) {
-          replaceDepth = adjustedDepth;
-          replaceIdx = idx + i;
-        }
       }
     }
 
-    // Store
     const e = this.entries[replaceIdx];
-    // Don't overwrite an entry of same position with lower depth
     if (e.key16 === key16 && depth < e.depth) return;
 
-    if (move || e.key16 !== key16) {
-      e.move = move;
-    }
     e.key16 = key16;
+    e.move = move;
     e.value = value;
     e.eval = evalVal;
     e.depth = depth;
@@ -165,219 +165,64 @@ class TranspositionTable {
 }
 
 // =============== History Tables ===============
+class HistoryTable {
+  constructor() {
+    this.table = [];
+    for (let i = 0; i < 90; i++) {
+      this.table[i] = new Int16Array(90);
+    }
+  }
+  get(from, to) { return this.table[from][to]; }
+  update(from, to, bonus) {
+    const delta = Math.round(bonus - this.table[from][to] * Math.abs(bonus) / 1000);
+    this.table[from][to] += delta;
+  }
+  clear() {
+    for (let i = 0; i < 90; i++) this.table[i].fill(0);
+  }
+}
 
 class HistoryTables {
   constructor() {
-    // [color][from_sq][to_sq]
-    this.mainHistory = [];
-    this.captureHistory = [];
-    // [piece][to_sq]
-    this.contHistory = [];  // continuation history
-    // [piece][to_sq]
-    this.counterMove = [];
-
-    this.init();
-  }
-
-  init() {
-    for (let c = 0; c < COLOR_NB; c++) {
-      this.mainHistory[c] = [];
-      this.captureHistory[c] = [];
-      for (let i = 0; i < 90; i++) {
-        this.mainHistory[c][i] = new Int16Array(90);
-        this.captureHistory[c][i] = new Int16Array(90);
-      }
-    }
+    this.mainHistory = [new HistoryTable(), new HistoryTable()];
+    this.captureHistory = new HistoryTable();
+    this.contHistory = [];
     for (let i = 0; i < PIECE_NB; i++) {
-      this.contHistory[i] = new Int16Array(90);
+      this.contHistory[i] = new HistoryTable();
+    }
+    this.counterMove = [];
+    for (let i = 0; i < PIECE_NB; i++) {
       this.counterMove[i] = new Int32Array(90);
     }
   }
-
   clear() {
-    this.init();
-  }
-
-  getHistory(c, m) {
-    const from = fromSq(m), to = toSq(m);
-    return this.mainHistory[c][from][to];
-  }
-
-  updateHistory(c, m, bonus) {
-    const from = fromSq(m), to = toSq(m);
-    const idx = c === WHITE ? 0 : 1;
-
-    // Clamp bonus
-    if (bonus > 1000) bonus = 1000;
-    if (bonus < -1000) bonus = -1000;
-
-    // Update main history
-    const delta = bonus - this.mainHistory[idx][from][to] * Math.abs(bonus) / 1000;
-    this.mainHistory[idx][from][to] += Math.round(delta);
-
-    // Update capture history (simplified)
-    this.captureHistory[idx][from][to] += Math.round(delta * 0.5);
-  }
-
-  getContHistory(pc, to) {
-    return this.contHistory[pc][to];
-  }
-
-  updateContHistory(pc, to, bonus) {
-    if (bonus > 500) bonus = 500;
-    if (bonus < -500) bonus = -500;
-    const delta = bonus - this.contHistory[pc][to] * Math.abs(bonus) / 500;
-    this.contHistory[pc][to] += Math.round(delta);
-  }
-
-  getCounterMove(pc, to) {
-    return this.counterMove[pc][to];
-  }
-
-  setCounterMove(pc, to, m) {
-    this.counterMove[pc][to] = m;
+    for (const h of this.mainHistory) h.clear();
+    this.captureHistory.clear();
+    for (const h of this.contHistory) h.clear();
+    for (let i = 0; i < PIECE_NB; i++) this.counterMove[i].fill(MOVE_NONE);
   }
 }
 
 // =============== Stack ===============
-
 class StackEntry {
   constructor() {
-    this.pv = null;         // Not used directly in JS
+    this.pv = null;
     this.currentMove = MOVE_NONE;
     this.excludedMove = MOVE_NONE;
     this.killers = [MOVE_NONE, MOVE_NONE];
-    this.staticEval = 0;
+    this.staticEval = VALUE_NONE;
     this.statScore = 0;
     this.moveCount = 0;
     this.ttHit = false;
     this.inCheck = false;
     this.ttPv = false;
-    this.excludedMovesChecked = false;
-    this.improving = NOT_IMPROVING;
-  }
-
-  reset() {
-    this.currentMove = MOVE_NONE;
-    this.excludedMove = MOVE_NONE;
-    this.killers[0] = MOVE_NONE;
-    this.killers[1] = MOVE_NONE;
-    this.staticEval = 0;
-    this.statScore = 0;
-    this.moveCount = 0;
-    this.ttHit = false;
-    this.inCheck = false;
-    this.ttPv = false;
-    this.excludedMovesChecked = false;
-    this.improving = NOT_IMPROVING;
+    this.ply = 0;
+    this.cutoffCnt = 0;
+    this.doubleExtensions = 0;
   }
 }
 
-// =============== Search Context ===============
-
-class SearchContext {
-  constructor(pos) {
-    this.pos = pos;
-    this.nodes = 0;
-    this.selDepth = 0;
-    this.rootDepth = 0;
-    this.stopFlag = false;
-    this.startTime = 0;
-    this.moveTime = TIME_FOREVER;
-    this.maxDepth = 64;
-    this.bestMove = MOVE_NONE;
-
-    // Stack as array, indexed by ply
-    this.stack = [];
-    for (let i = 0; i < MAX_PLY + 4; i++) {
-      this.stack.push(new StackEntry());
-    }
-  }
-
-  // Check if time limit exceeded
-  checkTime() {
-    if (this.nodes & 4095) return; // Check every 4096 nodes
-    if (this.stopFlag) return;
-    const elapsed = Date.now() - this.startTime;
-    if (elapsed >= this.moveTime) {
-      this.stopFlag = true;
-    }
-  }
-
-  // Compute LMR reduction based on depth and move count
-  reduction(improving, depth, moveCount) {
-    // LMR formula from Pikafish
-    let r = Math.log(depth) * Math.log(moveCount) / 1.95;
-    r = Math.floor(r);
-    if (r < 0) r = 0;
-
-    // Adjust by improving state
-    if (!improving) r++;
-    if (r > depth - 1) r = depth - 1;
-
-    return r;
-  }
-}
-
-// =============== Move Scoring for Ordering ===============
-
-function scoreMove(ss, pos, m, ttMove, history) {
-  if (m === ttMove) return 1000000;
-
-  const from = fromSq(m);
-  const to = toSq(m);
-  const captured = pos.board[to];
-  const pc = pos.board[from];
-  const c = pos.sideToMove;
-
-  if (captured !== NO_PIECE) {
-    // MVV-LVA for captures
-    const capturedVal = PieceValue[MG][captured] || 0;
-    const pieceVal = PieceValue[MG][pc] || 0;
-    // SEE-based ordering
-    if (pos.seeGE(m, 0)) {
-      return 500000 + (capturedVal / 10) - (pieceVal / 100);
-    } else {
-      return 300000 + (capturedVal / 10) - (pieceVal / 100);
-    }
-  }
-
-  // Quiets: killer first, then history
-  if (ss.killers[0] === m) return 200000;
-  if (ss.killers[1] === m) return 190000;
-
-  return Math.min(180000, history.getHistory(c, m));
-}
-
-// =============== Staged Move Generation ===============
-
-class MoveList {
-  constructor() {
-    this.moves = new Int32Array(128);
-    this.size = 0;
-  }
-  push(m) { this.moves[this.size++] = m; }
-  clear() { this.size = 0; }
-}
-
-// Generate all legal moves into MoveList
-function generateAllMoves(pos, list) {
-  list.clear();
-  const moves = [];
-  pos.generateLegalMoves(moves);
-  for (const m of moves) list.push(m);
-}
-
-// Generate captures only
-function generateCaptures(pos, list) {
-  list.clear();
-  const moves = [];
-  pos.generateLegalCaptures(moves);
-  for (const m of moves) list.push(m);
-}
-
-// =============== Main Search ===============
-
+// =============== Search ===============
 export default class Search {
   constructor() {
     this.tt = new TranspositionTable();
@@ -385,6 +230,12 @@ export default class Search {
     this.nodes = 0;
     this.rootDepth = 0;
     this.bestMove = MOVE_NONE;
+    this.selDepth = 0;
+
+    this.stack = [];
+    for (let i = 0; i < MAX_PLY + 10; i++) {
+      this.stack.push(new StackEntry());
+    }
   }
 
   clear() {
@@ -393,332 +244,159 @@ export default class Search {
     this.nodes = 0;
     this.rootDepth = 0;
     this.bestMove = MOVE_NONE;
+    this.selDepth = 0;
   }
 
-  /**
-   * search(pos, options) - Main entry point for search
-   * options: { moveTime, maxDepth }
-   * Returns best move
-   */
+  // =============== Helpers ===============
+  static mateIn(ply) { return VALUE_MATE - ply; }
+  static matedIn(ply) { return -VALUE_MATE + ply; }
+
+  valueToTT(v, ply) {
+    return v >= VALUE_MATE_IN_MAX_PLY ? v + ply :
+           v <= VALUE_MATED_IN_MAX_PLY ? v - ply : v;
+  }
+
+  valueFromTT(v, ply) {
+    return v >= VALUE_MATE_IN_MAX_PLY ? v - ply :
+           v <= VALUE_MATED_IN_MAX_PLY ? v + ply : v;
+  }
+
+  futilityMargin(d, improving) {
+    return futi_mar * (d - (improving ? 1 : 0));
+  }
+
+  reduction(improving, depth, moveCount, delta, rootDelta) {
+    const r = this.Reductions[depth] * this.Reductions[moveCount];
+    return Math.floor((r + redu_1 - delta * 1024 / rootDelta) / 1024) + (!improving && r > redu_2 ? 1 : 0);
+  }
+
+  statBonus(d) {
+    return Math.min((st_bo_1 * d + st_bo_2) * d - st_bo_3, st_bo_4);
+  }
+
+  futilityMoveCount(improving, depth) {
+    return improving ? (improv_1 + depth * depth) : (improv_2 + depth * depth) / improv_3;
+  }
+
+  // =============== SEARCH ===============
   search(pos, options = {}) {
-    const ctx = new SearchContext(pos);
-    ctx.nodes = 0;
-    ctx.stopFlag = false;
-    ctx.startTime = Date.now();
-    ctx.moveTime = options.moveTime || TIME_FOREVER;
-    ctx.maxDepth = options.maxDepth || 64;
+    this.nodes = 0;
+    this.selDepth = 0;
+    this.stopFlag = false;
+    this.startTime = Date.now();
+    this.moveTime = options.moveTime || 99999999;
+    this.maxDepth = Math.min(options.maxDepth || 64, MAX_PLY - 1);
 
     this.tt.newSearch();
 
+    // Get root moves
+    const rootMoves = [];
+    pos.generateLegalMoves(rootMoves);
+    if (rootMoves.length === 0) return MOVE_NONE;
+
+    // Initialize root move states
+    const rm = rootMoves.map(m => ({
+      move: m, score: -VALUE_INFINITE, avgScore: -VALUE_INFINITE, 
+      previousScore: -VALUE_INFINITE, pv: [m]
+    }));
+
     // Iterative deepening
-    ctx.rootDepth = 0;
     let bestValue = -VALUE_INFINITE;
-    let delta = 16; // aspiration window delta
 
-    for (let depth = 1; depth <= ctx.maxDepth; depth++) {
-      ctx.rootDepth = depth;
-
+    for (this.rootDepth = 1; this.rootDepth <= this.maxDepth; this.rootDepth++) {
       // Aspiration window
       let alpha = -VALUE_INFINITE;
       let beta = VALUE_INFINITE;
-      if (depth >= 4) {
-        alpha = Math.max(-VALUE_INFINITE, bestValue - delta);
-        beta = Math.min(VALUE_INFINITE, bestValue + delta);
+      let delta = 12;
+
+      if (this.rootDepth >= 4 && rm[0].avgScore !== -VALUE_INFINITE) {
+        const prev = rm[0].avgScore;
+        delta = 12 + Math.floor(prev * prev / 29027);
+        alpha = Math.max(prev - delta, -VALUE_INFINITE);
+        beta = Math.min(prev + delta, VALUE_INFINITE);
       }
 
       while (true) {
-        const ss = ctx.stack[0]; // Root stack
-        ss.reset();
+        const ss = this.stack[0];
+        ss.ply = 0;
         ss.inCheck = pos.inCheck();
+        ss.staticEval = VALUE_NONE;
+        ss.ttHit = false;
+        ss.ttPv = true;
 
-        const value = this.searchRoot(pos, ctx, ss, alpha, beta, depth);
+        bestValue = this.searchRoot(pos, ss, alpha, beta, this.rootDepth, rm);
 
-        if (ctx.stopFlag) break;
+        if (this.stopFlag) break;
 
-        // Aspiration window handling
-        if (value <= alpha) {
-          // Fail low: widen window
+        // Sort root moves by score
+        rm.sort((a, b) => b.score - a.score);
+
+        if (bestValue <= alpha) {
           beta = (alpha + beta) / 2;
-          alpha = Math.max(-VALUE_INFINITE, value - delta);
-          delta += delta / 2;
-          if (beta < alpha) beta = VALUE_INFINITE;
-        } else if (value >= beta) {
-          // Fail high: widen window
-          beta = Math.min(VALUE_INFINITE, value + delta);
-          delta += delta / 2;
+          alpha = Math.max(bestValue - delta, -VALUE_INFINITE);
+        } else if (bestValue >= beta) {
+          beta = Math.min(bestValue + delta, VALUE_INFINITE);
         } else {
-          // Exact score
-          bestValue = value;
           break;
         }
+        delta += Math.floor(delta / 4) + 2;
 
-        if (delta > 1000) {
-          // Window too wide, just use full window
+        if (alpha >= beta) {
           alpha = -VALUE_INFINITE;
           beta = VALUE_INFINITE;
         }
       }
 
-      if (ctx.stopFlag) break;
-
-      bestValue = ctx.stack[0].pvValue || bestValue;
+      if (this.stopFlag) break;
     }
 
-    this.nodes = ctx.nodes;
-    this.rootDepth = ctx.rootDepth;
-    this.bestMove = ctx.bestMove;
-    return ctx.bestMove;
+    this.bestMove = rm.length > 0 && rm[0].score > -VALUE_INFINITE ? rm[0].move : (rm[0] ? rm[0].move : MOVE_NONE);
+    return this.bestMove;
   }
 
   // =============== Root Search ===============
-
-  searchRoot(pos, ctx, ss, alpha, beta, depth) {
+  searchRoot(pos, ss, alpha, beta, depth, rootMoves) {
     let bestValue = -VALUE_INFINITE;
     let bestMove = MOVE_NONE;
 
-    // Generate root moves
-    const rootMoves = new MoveList();
-    generateAllMoves(pos, rootMoves);
-
-    if (rootMoves.size === 0) {
-      return pos.inCheck() ? -VALUE_MATE + ss.ply : VALUE_DRAW;
-    }
-
-    // Score and sort root moves
-    const scoredMoves = [];
-    for (let i = 0; i < rootMoves.size; i++) {
-      const m = rootMoves.moves[i];
-      scoredMoves.push({
-        move: m,
-        score: -VALUE_INFINITE,
-      });
-    }
-
-    for (let i = 0; i < scoredMoves.length && !ctx.stopFlag; i++) {
-      const moveInfo = scoredMoves[i];
-
-      ss.currentMove = moveInfo.move;
-      ss.ply = 0;
-
-      if (!pos.doMove(moveInfo.move)) continue;
-
-      ctx.nodes++;
-
-      let value;
-      if (i === 0) {
-        // First move: full window search
-        value = -this.searchPV(pos, ctx, ctx.stack[1], -beta, -alpha, depth - 1);
-      } else {
-        // Zero window search to see if better
-        value = -this.searchNonPV(pos, ctx, ctx.stack[1], -alpha - 1, -alpha, depth - 1);
-        if (value > alpha && value < beta) {
-          // Re-search with full window
-          value = -this.searchPV(pos, ctx, ctx.stack[1], -beta, -alpha, depth - 1);
-        }
-      }
-
-      pos.undoMove(moveInfo.move);
-
-      if (ctx.stopFlag) return VALUE_ZERO;
-
-      moveInfo.score = value;
-
-      if (value > bestValue) {
-        bestValue = value;
-        bestMove = moveInfo.move;
-
-        if (value > alpha) {
-          alpha = value;
-
-          // Record PV
-          ss.pvValue = value;
-        }
-      }
-
-      if (alpha >= beta) break;
-    }
-
-    ctx.bestMove = bestMove;
-    return bestValue;
-  }
-
-  // =============== PV Search (principal variation) ===============
-
-  searchPV(pos, ctx, ss, alpha, beta, depth) {
-    ss.ply = 1; // Will be adjusted per level
-    const result = this._searchPV(pos, ctx, ss, alpha, beta, depth, 0);
-    return result;
-  }
-
-  _searchPV(pos, ctx, ss, alpha, beta, depth, plySkipped) {
-    // Actually, let me use a proper recursive implementation with ply tracking
-    // The key fix: pass ply explicitly
-    return this.searchPVImpl(pos, ctx, ss, alpha, beta, depth, 0);
-  }
-
-  searchPVImpl(pos, ctx, ss, alpha, beta, depth, ply) {
-    ss.ply = ply;
-    ss.ttHit = false;
     ss.inCheck = pos.inCheck();
 
-    ctx.checkTime();
-    if (ctx.stopFlag) return VALUE_ZERO;
-
-    // Mate distance pruning
-    if (ply >= MAX_PLY - 1) {
-      return evaluate(pos);
+    // Check for stop
+    if (this.nodes % 4096 === 0 && Date.now() - this.startTime >= this.moveTime) {
+      this.stopFlag = true;
+      return VALUE_ZERO;
     }
 
-    // Check for draw
-    if (pos.isDraw(ply)) return VALUE_DRAW;
-
-    // TT probe
-    let ttValue = VALUE_NONE;
-    let ttMove = MOVE_NONE;
-    let ttHit = false;
-
-    const tte = this.tt.probe(pos.key());
-    if (tte && tte.move !== MOVE_NONE) {
-      ttMove = tte.move;
-      ttHit = true;
-      ss.ttHit = true;
-    }
-
-    // TT cut (PV nodes)
-    if (ttHit && tte.depth >= depth) {
-      ttValue = tte.value;
-      const bound = tte.genBound & 3;
-
-      // Adjust mate values
-      if (ttValue >= VALUE_MATE_IN_MAX_PLY) ttValue -= ply;
-      else if (ttValue <= VALUE_MATED_IN_MAX_PLY) ttValue += ply;
-
-      if (bound === BOUND_EXACT) return ttValue;
-      if (bound === BOUND_LOWER && ttValue >= beta) return ttValue;
-      if (bound === BOUND_UPPER && ttValue <= alpha) return ttValue;
-    }
-
-    // Evaluate position
-    let improving = false;
-    if (!ss.inCheck) {
-      ss.staticEval = evaluate(pos);
-
-      // Check previous ply for improving
-      if (ply >= 2) {
-        const prevSq = ctx.stack[ply - 2];
-        if (prevSq.staticEval !== 0) {
-          improving = ss.staticEval > prevSq.staticEval;
-        }
-      }
-
-      if (ttHit && tte.eval !== VALUE_NONE) {
-        ss.staticEval = tte.eval;
-      }
-    } else {
-      ss.staticEval = -VALUE_INFINITE;
-    }
-
-    // Razoring
-    if (!ss.inCheck && depth <= 1 && ss.staticEval + 500 < alpha) {
-      const v = this.qsearchPV(pos, ctx, ss, alpha, beta, ply);
-      if (v <= alpha) return v;
-    }
-
-    // Futility pruning
-    if (!ss.inCheck && depth <= 4 && ss.staticEval + 120 * depth <= alpha) {
-      const v = this.qsearchPV(pos, ctx, ss, alpha, beta, ply);
-      if (v < beta) return v;
-    }
-
-    // Null move pruning
-    if (!ss.inCheck && depth >= 2 && !pos.hasRepetition()) {
-      const R = 3 + depth / 3;
-      if (pos.doNullMove()) {
-        const nullPly = ply + 1;
-        const nextSS = ctx.stack[nullPly];
-        nextSS.staticEval = 0;
-        const nullValue = -this.searchNonPV(pos, ctx, nextSS, -beta, -beta + 1, depth - R, nullPly);
-        pos.undoNullMove();
-
-        if (ctx.stopFlag) return VALUE_ZERO;
-
-        if (nullValue >= beta) {
-          if (depth < 12) return nullValue;
-          // Verification search
-          const v = this.searchNonPV(pos, ctx, ss, beta - 1, beta, depth - R, ply);
-          if (v >= beta) return nullValue;
-        }
-      }
-    }
-
-    // Move generation and search
-    const moveList = new MoveList();
-    generateAllMoves(pos, moveList);
-
-    // Score and sort
-    const moves = [];
-    for (let i = 0; i < moveList.size; i++) {
-      moves.push({
-        move: moveList.moves[i],
-        score: scoreMove(ss, pos, moveList.moves[i], ttMove, this.history),
-      });
-    }
-    moves.sort((a, b) => b.score - a.score);
-
-    let bestValue = -VALUE_INFINITE;
-    let bestMove = MOVE_NONE;
-    let moveCount = 0;
-    let bound = BOUND_UPPER;
-
-    for (let i = 0; i < moves.length && !ctx.stopFlag; i++) {
-      const m = moves[i].move;
-
-      if (m === ss.excludedMove) continue;
-
+    for (const rm of rootMoves) {
+      const m = rm.move;
       ss.currentMove = m;
 
       if (!pos.doMove(m)) continue;
-
-      ctx.nodes++;
-      moveCount++;
-      ss.moveCount = moveCount;
-
-      // LMR
-      let extension = 0;
-      let newDepth = depth - 1 + extension;
-
-      // Late Move Reduction
-      let doLMR = depth >= 3 && moveCount > 3;
-
-      const nextSS = ctx.stack[ply + 1];
-      nextSS.reset();
-      nextSS.inCheck = pos.inCheck();
+      this.nodes++;
 
       let value;
-      if (i === 0) {
-        // First move: full window
-        value = -this.searchPVImpl(pos, ctx, nextSS, -beta, -alpha, newDepth, ply + 1);
+      if (bestValue === -VALUE_INFINITE) {
+        // First move: full window search
+        const nextSS = this.stack[1];
+        value = -this.searchPV(pos, nextSS, -beta, -alpha, depth - 1);
       } else {
-        // LMR
-        let r = this.lmrReduction(improving, depth, moveCount);
-
-        // Zero window with reduction
-        value = -this.searchNonPV(pos, ctx, nextSS, -alpha - 1, -alpha, newDepth - r, ply + 1);
-
-        if (value > alpha) {
-          // Re-search without reduction
-          value = -this.searchNonPV(pos, ctx, nextSS, -alpha - 1, -alpha, newDepth, ply + 1);
-        }
+        // Zero window search
+        const nextSS = this.stack[1];
+        value = -this.searchNonPV(pos, nextSS, -alpha - 1, -alpha, depth - 1);
 
         if (value > alpha && value < beta) {
-          // PV re-search
-          value = -this.searchPVImpl(pos, ctx, nextSS, -beta, -alpha, newDepth, ply + 1);
+          // Re-search with full window
+          const nextSS = this.stack[1];
+          value = -this.searchPV(pos, nextSS, -beta, -alpha, depth - 1);
         }
       }
 
       pos.undoMove(m);
 
-      if (ctx.stopFlag) return VALUE_ZERO;
+      if (this.stopFlag) return VALUE_ZERO;
+
+      rm.score = value;
+      rm.avgScore = rm.avgScore === -VALUE_INFINITE ? value : Math.floor((2 * value + rm.avgScore) / 3);
 
       if (value > bestValue) {
         bestValue = value;
@@ -726,316 +404,601 @@ export default class Search {
 
         if (value > alpha) {
           alpha = value;
-          bound = BOUND_EXACT;
-
-          // Update history
-          if (pos.board[toSq(m)] === NO_PIECE) {
-            this.history.updateHistory(pos.sideToMove ^ 1, m, depth * depth);
-          }
+          if (value >= beta) break;
         }
       }
-
-      if (alpha >= beta) {
-        bound = BOUND_LOWER;
-        // Update killers and history
-        if (pos.board[toSq(m)] === NO_PIECE) {
-          ss.killers[1] = ss.killers[0];
-          ss.killers[0] = m;
-          this.history.updateHistory(pos.sideToMove ^ 1, m, depth * depth);
-        }
-        break;
-      }
     }
-
-    // No legal moves
-    if (moveCount === 0 && !ss.excludedMove) {
-      return ss.inCheck ? -VALUE_MATE + ply : VALUE_DRAW;
-    }
-
-    // Store to TT
-    const ttVal = bestValue >= VALUE_MATE_IN_MAX_PLY ? bestValue + ply :
-                  bestValue <= VALUE_MATED_IN_MAX_PLY ? bestValue - ply :
-                  bestValue;
-    this.tt.store(pos.key(), bestMove, ttVal, ss.staticEval, depth, bound);
 
     return bestValue;
   }
 
-  // =============== Non-PV Search ===============
+  // =============== PV Search ===============
+  searchPV(pos, ss, alpha, beta, depth) {
+    // C++: depth <= 0 → qsearch
+    if (depth <= 0) return this.qsearchPV(pos, ss, alpha, beta);
 
-  searchNonPV(pos, ctx, ss, alpha, beta, depth, ply) {
-    ss.ply = ply;
-    ss.ttHit = false;
+    ss.ply = Array.from(this.stack).findIndex(s => s === ss);
+    if (ss.ply < 0) ss.ply = 0;
     ss.inCheck = pos.inCheck();
+    ss.moveCount = 0;
 
-    ctx.checkTime();
-    if (ctx.stopFlag) return VALUE_ZERO;
-
-    if (ply >= MAX_PLY - 1) {
-      return evaluate(pos);
+    this.nodes++;
+    if (this.nodes % 4096 === 0 && Date.now() - this.startTime >= this.moveTime) {
+      this.stopFlag = true;
+      return VALUE_ZERO;
     }
 
-    if (pos.isDraw(ply)) return VALUE_DRAW;
+    if (ss.ply >= MAX_PLY) return evaluate(pos);
+
+    // Draw / repetition
+    let result = VALUE_ZERO;
+    if (pos.ruleJudge(result, ss.ply)) return result === VALUE_DRAW ? VALUE_DRAW - 1 + (this.nodes & 2) : result;
+
+    // Mate distance pruning
+    alpha = Math.max(Search.matedIn(ss.ply), alpha);
+    beta = Math.min(Search.mateIn(ss.ply + 1), beta);
+    if (alpha >= beta) return alpha;
 
     // TT probe
+    const excludedMove = ss.excludedMove;
+    const posKey = excludedMove === MOVE_NONE ? pos.key() : pos.key() ^ BigInt(excludedMove);
+    let ttHit = { value: false };
+    const tte = this.tt.probe(posKey, ttHit);
+    ss.ttHit = ttHit.value;
+
+    let ttValue = VALUE_NONE;
     let ttMove = MOVE_NONE;
-    const tte = this.tt.probe(pos.key());
-    if (tte && tte.move !== MOVE_NONE) {
+    if (ss.ttHit) {
+      ttValue = this.valueFromTT(tte.value, ss.ply);
       ttMove = tte.move;
-      ss.ttHit = true;
     }
 
-    // TT cut
-    if (ss.ttHit && tte.depth >= depth) {
-      let ttValue = tte.value;
+    // Early TT cutoff for non-PV (not applicable here since this is PV, but we still check)
+    if (ss.ttHit && tte.depth >= depth && ttValue !== VALUE_NONE) {
       const bound = tte.genBound & 3;
-
-      if (ttValue >= VALUE_MATE_IN_MAX_PLY) ttValue -= ply;
-      else if (ttValue <= VALUE_MATED_IN_MAX_PLY) ttValue += ply;
-
       if (bound === BOUND_EXACT) return ttValue;
       if (bound === BOUND_LOWER && ttValue >= beta) return ttValue;
       if (bound === BOUND_UPPER && ttValue <= alpha) return ttValue;
     }
 
-    // Evaluate
-    let improving = false;
-    if (!ss.inCheck) {
-      ss.staticEval = evaluate(pos);
+    // Static evaluation
+    let evalVal, improving, improvement;
+    const prevSq = ss.ply > 0 ? toSq(this.stack[ss.ply - 1].currentMove) : SQ_NONE;
 
-      if (ply >= 2) {
-        const prevSS = ctx.stack[ply - 2];
-        if (prevSS.staticEval !== 0) {
-          improving = ss.staticEval > prevSS.staticEval;
-        }
-      }
-
-      if (ss.ttHit && tte.eval !== VALUE_NONE) {
-        ss.staticEval = tte.eval;
+    if (ss.inCheck) {
+      ss.staticEval = evalVal = VALUE_NONE;
+      improving = false;
+      improvement = 0;
+    } else if (ss.ttHit) {
+      ss.staticEval = evalVal = tte.eval;
+      if (evalVal === VALUE_NONE) ss.staticEval = evalVal = evaluate(pos);
+      if (ttValue !== VALUE_NONE && (tte.genBound & (ttValue > evalVal ? BOUND_LOWER : BOUND_UPPER))) {
+        evalVal = ttValue;
       }
     } else {
-      ss.staticEval = -VALUE_INFINITE;
+      ss.staticEval = evalVal = evaluate(pos);
+      if (excludedMove === MOVE_NONE) {
+        this.tt.store(posKey, MOVE_NONE, VALUE_NONE, evalVal, 0, BOUND_NONE, false);
+      }
     }
 
+    // Improvement
+    improvement = 0;
+    if (ss.ply >= 2 && this.stack[ss.ply - 2].staticEval !== VALUE_NONE) {
+      improvement = ss.staticEval - this.stack[ss.ply - 2].staticEval;
+    } else if (ss.ply >= 4 && this.stack[ss.ply - 4].staticEval !== VALUE_NONE) {
+      improvement = ss.staticEval - this.stack[ss.ply - 4].staticEval;
+    } else {
+      improvement = improv_1;
+    }
+    improving = improvement > 0;
+
+    // Razoring (non-PV only)
+    // Futility pruning
+    if (!ss.ttPv && depth < futi_depth && evalVal - this.futilityMargin(depth, improving) >= beta && evalVal >= beta) {
+      return evalVal;
+    }
+
+    // Null move pruning (non-PV only)
+
+    // PV node: if no ttMove, reduce depth
+    if (!ttMove) depth -= decre_1;
+    if (ttMove && depth > 1) {
+      depth -= Math.min(Math.floor((depth - tte.depth) / decre_2), decre_5);
+    }
+    if (depth <= 0) return this.qsearchPV(pos, ss, alpha, beta);
+
+    // Move generation
+    const moves = [];
+    pos.generateLegalMoves(moves);
+
+    // Score and sort moves
+    const scoredMoves = moves.map(m => ({
+      move: m,
+      score: this.scoreMove(ss, pos, m, ttMove)
+    }));
+    scoredMoves.sort((a, b) => b.score - a.score);
+
+    let bestValue = -VALUE_INFINITE;
+    let bestMove = MOVE_NONE;
+    let moveCount = 0;
+    let bound = BOUND_UPPER;
+
+    for (let i = 0; i < scoredMoves.length; i++) {
+      const m = scoredMoves[i].move;
+      if (m === excludedMove) continue;
+
+      moveCount++;
+      ss.moveCount = moveCount;
+
+      const capture = pos.board[toSq(m)] !== NO_PIECE;
+      const movedPiece = pos.board[fromSq(m)];
+      const givesCheck = pos.givesCheck(m);
+
+      let extension = 0;
+      let newDepth = depth - 1;
+
+      // Singular extension
+      if (depth >= exten_1 && m === ttMove && !excludedMove && Math.abs(ttValue) < VALUE_KNOWN_WIN
+          && (tte.genBound & BOUND_LOWER) && tte.depth >= depth - 3) {
+        const singularBeta = ttValue - (exten_2 + (ss.ttPv ? 1 : 0)) * depth;
+        const singularDepth = Math.floor((depth - 1) / 2);
+        ss.excludedMove = m;
+        const v = this.searchNonPV(pos, ss, singularBeta - 1, singularBeta, singularDepth);
+        ss.excludedMove = MOVE_NONE;
+        if (v < singularBeta) {
+          extension = exten_7;
+          if (v < singularBeta - 2 && ss.doubleExtensions <= exten_8) extension = exten_9;
+        } else if (singularBeta >= beta) {
+          return singularBeta;
+        }
+      } else if (givesCheck && depth > 10 && Math.abs(ss.staticEval) > 59) {
+        extension = exten_12;
+      }
+      newDepth += extension;
+      ss.doubleExtensions = (this.stack[ss.ply - 1] ? this.stack[ss.ply - 1].doubleExtensions : 0) + (extension === exten_14 ? 1 : 0);
+
+      ss.currentMove = m;
+
+      if (!pos.doMove(m)) continue;
+
+      this.nodes++;
+      const nextSS = this.stack[ss.ply + 1];
+      nextSS.ttPv = false;
+      nextSS.excludedMove = MOVE_NONE;
+      this.stack[ss.ply + 2] && (this.stack[ss.ply + 2].killers = [MOVE_NONE, MOVE_NONE]);
+
+      let value;
+
+      // LMR
+      if (depth >= 2 && moveCount > 1 + (ss.ply <= 1 ? 1 : 0)) {
+        let r = this.reduction(improving, depth, moveCount, beta - alpha, this.rootDelta || 100);
+
+        if (ss.ttPv) r -= singledecre_1 + Math.floor(singledecre_2 / (singledecre_3 + depth));
+        if ((ss.ply > 0 && this.stack[ss.ply - 1].moveCount > decr_10)) r -= decr_11;
+        if (capture) r += decr_12;
+
+        r -= Math.floor(ss.statScore / (decr_6 + decr_7 * (depth > decr_8 && depth < decr_9 ? 1 : 0)));
+
+        const d = Math.max(1, Math.min(newDepth - r, newDepth + 1));
+        value = -this.searchNonPV(pos, nextSS, -(alpha + 1), -alpha, d);
+
+        if (value > alpha && d < newDepth) {
+          const doDeeper = value > (alpha + lmrse_1 + lmrse_2 * (newDepth - d));
+          const doEvenDeeper = value > (alpha + lmrse_3 + lmrse_4 * (newDepth - d));
+          const doShallower = value < bestValue + newDepth;
+          newDepth += doDeeper - doShallower + doEvenDeeper;
+          if (newDepth > d) {
+            value = -this.searchNonPV(pos, nextSS, -(alpha + 1), -alpha, newDepth);
+          }
+        }
+      } else if (moveCount > 1) {
+        value = -this.searchNonPV(pos, nextSS, -(alpha + 1), -alpha, newDepth);
+      }
+
+      // PV re-search
+      if (moveCount === 1 || (value > alpha && value < beta)) {
+        const nextSS = this.stack[ss.ply + 1];
+        value = -this.searchPV(pos, nextSS, -beta, -alpha, Math.min(depth, newDepth));
+      }
+
+      pos.undoMove(m);
+
+      if (this.stopFlag) return VALUE_ZERO;
+
+      if (value > bestValue) {
+        bestValue = value;
+        if (value > alpha) {
+          bestMove = m;
+          if (value < beta) {
+            alpha = value;
+            if (depth > 2 && depth < 7 && beta < VALUE_KNOWN_WIN && alpha > -VALUE_KNOWN_WIN) {
+              depth--;
+            }
+          } else {
+            ss.cutoffCnt++;
+            break;
+          }
+        }
+      } else {
+        ss.cutoffCnt = 0;
+      }
+    }
+
+    if (moveCount === 0) {
+      bestValue = excludedMove ? alpha : Search.matedIn(ss.ply);
+    }
+
+    // TT save
+    if (excludedMove === MOVE_NONE) {
+      this.tt.store(posKey, bestMove, this.valueToTT(bestValue, ss.ply), ss.staticEval, depth,
+        bestValue >= beta ? BOUND_LOWER : (bestMove ? BOUND_EXACT : BOUND_UPPER), false);
+    }
+
+    return bestValue;
+  }
+
+  // =============== Non-PV Search ===============
+  searchNonPV(pos, ss, alpha, beta, depth) {
+    // C++: depth <= 0 → qsearch
+    if (depth <= 0) return this.qsearchNonPV(pos, ss, alpha, beta);
+
+    ss.ply = Array.from(this.stack).findIndex(s => s === ss);
+    if (ss.ply < 0) ss.ply = 0;
+    ss.inCheck = pos.inCheck();
+    ss.moveCount = 0;
+
+    this.nodes++;
+    if (this.nodes % 4096 === 0 && Date.now() - this.startTime >= this.moveTime) {
+      this.stopFlag = true;
+      return VALUE_ZERO;
+    }
+
+    if (ss.ply >= MAX_PLY) return ss.inCheck ? VALUE_DRAW - 1 + (this.nodes & 2) : evaluate(pos);
+
+    // Draw
+    let result = VALUE_ZERO;
+    if (pos.ruleJudge(result, ss.ply)) return result === VALUE_DRAW ? VALUE_DRAW - 1 + (this.nodes & 2) : result;
+
+    // Mate distance pruning
+    alpha = Math.max(Search.matedIn(ss.ply), alpha);
+    beta = Math.min(Search.mateIn(ss.ply + 1), beta);
+    if (alpha >= beta) return alpha;
+
+    // TT probe
+    const excludedMove = ss.excludedMove;
+    const posKey = excludedMove === MOVE_NONE ? pos.key() : pos.key() ^ BigInt(excludedMove);
+    let ttHit = { value: false };
+    const tte = this.tt.probe(posKey, ttHit);
+    ss.ttHit = ttHit.value;
+
+    let ttValue = VALUE_NONE;
+    let ttMove = MOVE_NONE;
+    if (ss.ttHit) {
+      ttValue = this.valueFromTT(tte.value, ss.ply);
+      ttMove = tte.move;
+    }
+
+    // Early TT cutoff
+    if (ss.ttHit && tte.depth >= depth && ttValue !== VALUE_NONE) {
+      const bound = tte.genBound & 3;
+      if (bound === BOUND_EXACT) return ttValue;
+      if (bound === BOUND_LOWER && ttValue >= beta) return ttValue;
+      if (bound === BOUND_UPPER && ttValue <= alpha) return ttValue;
+    }
+
+    // Static evaluation
+    let evalVal, improving, improvement;
+    const prevSq = ss.ply > 0 ? toSq(this.stack[ss.ply - 1].currentMove) : SQ_NONE;
+
+    if (ss.inCheck) {
+      ss.staticEval = evalVal = VALUE_NONE;
+      improving = false;
+      improvement = 0;
+    } else if (ss.ttHit) {
+      ss.staticEval = evalVal = tte.eval;
+      if (evalVal === VALUE_NONE) ss.staticEval = evalVal = evaluate(pos);
+      if (ttValue !== VALUE_NONE && (tte.genBound & (ttValue > evalVal ? BOUND_LOWER : BOUND_UPPER))) {
+        evalVal = ttValue;
+      }
+    } else {
+      ss.staticEval = evalVal = evaluate(pos);
+      if (excludedMove === MOVE_NONE) {
+        this.tt.store(posKey, MOVE_NONE, VALUE_NONE, false, BOUND_NONE, 0, MOVE_NONE, evalVal);
+      }
+    }
+
+    improvement = 0;
+    if (ss.ply >= 2 && this.stack[ss.ply - 2].staticEval !== VALUE_NONE) {
+      improvement = ss.staticEval - this.stack[ss.ply - 2].staticEval;
+    } else if (ss.ply >= 4 && this.stack[ss.ply - 4].staticEval !== VALUE_NONE) {
+      improvement = ss.staticEval - this.stack[ss.ply - 4].staticEval;
+    } else {
+      improvement = improv_1;
+    }
+    improving = improvement > 0;
+
     // Razoring
-    if (!ss.inCheck && depth <= 1 && ss.staticEval + 500 < alpha) {
-      const v = this.qsearchNonPV(pos, ctx, ss, alpha, beta, ply);
-      if (v <= alpha) return v;
+    if (!improving && evalVal < alpha - Razo_1 - Razo_2 * depth * depth) {
+      const v = this.qsearchNonPV(pos, ss, alpha - 1, alpha);
+      if (v < alpha) return v;
     }
 
     // Futility pruning
-    if (!ss.inCheck && depth <= 4 && ss.staticEval + 120 * depth <= alpha) {
-      return this.qsearchNonPV(pos, ctx, ss, alpha, beta, ply);
+    if (!ss.ttPv && depth < futi_depth && evalVal - this.futilityMargin(depth, improving) >= beta && evalVal >= beta) {
+      return evalVal;
     }
 
     // Null move pruning
-    if (!ss.inCheck && depth >= 2 && !pos.hasRepetition()) {
-      const R = 3 + depth / 3;
+    if (ss.ply > 0 && evalVal >= beta && evalVal >= ss.staticEval && !excludedMove) {
+      const R = 3 + Math.floor(depth / 3) + Math.min(Math.floor((evalVal - beta) / 281), 2);
+      ss.currentMove = MOVE_NULL;
       if (pos.doNullMove()) {
-        const nullPly = ply + 1;
-        const nullSS = ctx.stack[nullPly];
-        nullSS.staticEval = 0;
-        const nullValue = -this.searchNonPV(pos, ctx, nullSS, -beta, -beta + 1, depth - R, nullPly);
+        const nextSS = this.stack[ss.ply + 1];
+        const nullValue = -this.searchNonPV(pos, nextSS, -beta, -beta + 1, depth - R);
         pos.undoNullMove();
-
-        if (ctx.stopFlag) return VALUE_ZERO;
-
         if (nullValue >= beta) {
+          if (nullValue >= VALUE_MATE_IN_MAX_PLY) nullValue = beta;
           return nullValue;
         }
       }
     }
 
     // Move generation
-    const moveList = new MoveList();
-    generateAllMoves(pos, moveList);
-
     const moves = [];
-    for (let i = 0; i < moveList.size; i++) {
-      moves.push({
-        move: moveList.moves[i],
-        score: scoreMove(ss, pos, moveList.moves[i], ttMove, this.history),
-      });
-    }
-    moves.sort((a, b) => b.score - a.score);
+    pos.generateLegalMoves(moves);
+
+    const scoredMoves = moves.map(m => ({
+      move: m,
+      score: this.scoreMove(ss, pos, m, ttMove)
+    }));
+    scoredMoves.sort((a, b) => b.score - a.score);
 
     let bestValue = -VALUE_INFINITE;
     let bestMove = MOVE_NONE;
     let moveCount = 0;
-    let bound = BOUND_UPPER;
 
-    for (let i = 0; i < moves.length && !ctx.stopFlag; i++) {
-      const m = moves[i].move;
-      if (m === ss.excludedMove) continue;
+    for (let i = 0; i < scoredMoves.length; i++) {
+      const m = scoredMoves[i].move;
+      if (m === excludedMove) continue;
 
-      ss.currentMove = m;
-
-      // SEE pruning for quiets at low depth
-      if (depth <= 3 && pos.board[toSq(m)] === NO_PIECE) {
-        if (!pos.seeGE(m, -50 * depth * depth)) continue;
-      }
-
-      if (!pos.doMove(m)) continue;
-
-      ctx.nodes++;
       moveCount++;
       ss.moveCount = moveCount;
 
-      const nextSS = ctx.stack[ply + 1];
-      nextSS.reset();
-      nextSS.inCheck = pos.inCheck();
+      const capture = pos.board[toSq(m)] !== NO_PIECE;
+      const movedPiece = pos.board[fromSq(m)];
+      const givesCheck = pos.givesCheck(m);
 
-      // LMR
+      let extension = 0;
       let newDepth = depth - 1;
-      let r = 0;
-      if (depth >= 3 && moveCount > 1) {
-        r = this.lmrReduction(improving, depth, moveCount);
+
+      // Pruning at shallow depth
+      if (bestValue > VALUE_MATED_IN_MAX_PLY) {
+        const moveCountPruning = moveCount >= this.futilityMoveCount(improving, depth);
+        const lmrDepth = Math.max(newDepth - this.reduction(improving, depth, moveCount, beta - alpha, this.rootDelta || 100), 0);
+
+        if (capture || givesCheck) {
+          if (!givesCheck && lmrDepth < Futi_cap_0 && !ss.inCheck
+              && ss.staticEval + Futi_cap_1 + Futi_cap_2 * lmrDepth + PieceValue[EG][pos.board[toSq(m)]] < alpha) {
+            continue;
+          }
+          if (!pos.seeGE(m, -Futi_cap_3 * depth + Futi_cap_4)) continue;
+        } else {
+          if (lmrDepth < Futi_cap_6) {
+            const hist = this.history.contHistory[movedPiece].get(fromSq(m), toSq(m));
+            if (hist < -Futi_cap_7 * (depth - 1)) continue;
+          }
+          if (!ss.inCheck && lmrDepth < Futi_par_6
+              && ss.staticEval + Futi_par_1 + Futi_par_2 * lmrDepth <= alpha) {
+            continue;
+          }
+          if (!pos.seeGE(m, -Futi_par_4 * lmrDepth * lmrDepth - Futi_par_5 * lmrDepth)) continue;
+        }
       }
 
-      let value = -this.searchNonPV(pos, ctx, nextSS, -alpha - 1, -alpha, newDepth - r, ply + 1);
+      ss.currentMove = m;
 
-      if (r > 0 && value > alpha) {
-        value = -this.searchNonPV(pos, ctx, nextSS, -alpha - 1, -alpha, newDepth, ply + 1);
+      if (!pos.doMove(m)) continue;
+
+      this.nodes++;
+      const nextSS = this.stack[ss.ply + 1];
+      nextSS.ttPv = false;
+      nextSS.excludedMove = MOVE_NONE;
+      this.stack[ss.ply + 2] && (this.stack[ss.ply + 2].killers = [MOVE_NONE, MOVE_NONE]);
+
+      let value;
+
+      if (depth >= 2 && moveCount > 1) {
+        let r = this.reduction(improving, depth, moveCount, beta - alpha, this.rootDelta || 100);
+        if (ss.ttPv) r -= singledecre_1 + Math.floor(singledecre_2 / (singledecre_3 + depth));
+        if (ss.ply > 0 && this.stack[ss.ply - 1].moveCount > decr_10) r -= decr_11;
+        if (capture) r += decr_12;
+
+        r -= Math.floor(ss.statScore / (decr_6 + decr_7 * (depth > decr_8 && depth < decr_9 ? 1 : 0)));
+
+        // Clamp reduction
+        const d = Math.max(1, Math.min(newDepth - r, newDepth + 1));
+        value = -this.searchNonPV(pos, nextSS, -(alpha + 1), -alpha, d);
+
+        if (value > alpha && d < newDepth) {
+          value = -this.searchNonPV(pos, nextSS, -(alpha + 1), -alpha, newDepth);
+        }
+      } else {
+        value = -this.searchNonPV(pos, nextSS, -(alpha + 1), -alpha, newDepth);
       }
 
       pos.undoMove(m);
 
-      if (ctx.stopFlag) return VALUE_ZERO;
+      if (this.stopFlag) return VALUE_ZERO;
 
       if (value > bestValue) {
         bestValue = value;
-        bestMove = m;
-
         if (value > alpha) {
+          bestMove = m;
+          if (value >= beta) {
+            ss.cutoffCnt++;
+            break;
+          }
           alpha = value;
-          bound = BOUND_EXACT;
         }
-      }
-
-      if (alpha >= beta) {
-        bound = BOUND_LOWER;
-        if (pos.board[toSq(m)] === NO_PIECE) {
-          ss.killers[1] = ss.killers[0];
-          ss.killers[0] = m;
-          this.history.updateHistory(pos.sideToMove ^ 1, m, depth * depth);
-        }
-        break;
+      } else {
+        ss.cutoffCnt = 0;
       }
     }
 
     if (moveCount === 0) {
-      return ss.inCheck ? -VALUE_MATE + ply : VALUE_DRAW;
+      bestValue = excludedMove ? alpha : Search.matedIn(ss.ply);
     }
 
-    // Store to TT
-    const ttVal = bestValue >= VALUE_MATE_IN_MAX_PLY ? bestValue + ply :
-                  bestValue <= VALUE_MATED_IN_MAX_PLY ? bestValue - ply :
-                  bestValue;
-    this.tt.store(pos.key(), bestMove, ttVal, ss.staticEval, depth, bound);
+    // TT save
+    if (excludedMove === MOVE_NONE) {
+      this.tt.store(posKey, bestMove, this.valueToTT(bestValue, ss.ply), ss.staticEval, depth,
+        bestValue >= beta ? BOUND_LOWER : (bestMove ? BOUND_EXACT : BOUND_UPPER), false);
+    }
 
     return bestValue;
   }
 
-  // =============== QSearch (quiescence search) ===============
+  // =============== QSearch ===============
+  qsearchPV(pos, ss, alpha, beta) {
+    ss.ply = Array.from(this.stack).findIndex(s => s === ss);
+    if (ss.ply < 0) ss.ply = 0;
+    ss.inCheck = pos.inCheck();
 
-  qsearchPV(pos, ctx, ss, alpha, beta, ply) {
-    ss.ply = ply;
-    ctx.checkTime();
-    if (ctx.stopFlag) return VALUE_ZERO;
+    this.nodes++;
+    if (this.nodes % 4096 === 0 && Date.now() - this.startTime >= this.moveTime) {
+      this.stopFlag = true;
+      return VALUE_ZERO;
+    }
 
-    if (ply >= MAX_PLY - 1) return evaluate(pos);
-    if (pos.isDraw(ply)) return VALUE_DRAW;
+    if (ss.ply >= MAX_PLY) return ss.inCheck ? VALUE_ZERO : evaluate(pos);
+
+    // Draw
+    let result = VALUE_ZERO;
+    if (pos.ruleJudge(result, ss.ply)) return result === VALUE_DRAW ? VALUE_DRAW - 1 + (this.nodes & 2) : result;
 
     // Stand pat
-    const standPat = evaluate(pos);
-    if (standPat >= beta) return standPat;
-    if (standPat > alpha) alpha = standPat;
+    let bestValue = ss.inCheck ? -VALUE_INFINITE : evaluate(pos);
+    if (bestValue >= beta) return bestValue;
+    if (bestValue > alpha) alpha = bestValue;
 
     // Generate captures
-    const moveList = new MoveList();
-    generateCaptures(pos, moveList);
+    const moves = [];
+    pos.generateLegalMoves(moves);
+    const captures = moves.filter(m => {
+      const captured = pos.board[toSq(m)];
+      return captured !== NO_PIECE && pos.seeGE(m, 0);
+    });
 
-    // Only search good captures (SEE >= 0)
-    const goodCaptures = [];
-    for (let i = 0; i < moveList.size; i++) {
-      const m = moveList.moves[i];
-      if (pos.seeGE(m, 0)) {
-        goodCaptures.push({ move: m, score: scoreMove(ss, pos, m, MOVE_NONE, this.history) });
-      }
-    }
-    goodCaptures.sort((a, b) => b.score - a.score);
+    // Score and sort
+    const scored = captures.map(m => ({
+      move: m,
+      score: PieceValue[EG][pos.board[toSq(m)]] - PieceValue[EG][pos.board[fromSq(m)]] / 100
+    }));
+    scored.sort((a, b) => b.score - a.score);
 
-    for (let i = 0; i < goodCaptures.length && !ctx.stopFlag; i++) {
-      const m = goodCaptures[i].move;
+    for (const { move: m } of scored) {
       if (!pos.doMove(m)) continue;
-
-      ctx.nodes++;
-      const value = -this.qsearchPV(pos, ctx, ss, -beta, -alpha, ply + 1);
+      this.nodes++;
+      const nextSS = this.stack[ss.ply + 1];
+      const value = -this.qsearchPV(pos, nextSS, -beta, -alpha);
       pos.undoMove(m);
 
-      if (ctx.stopFlag) return VALUE_ZERO;
-      if (value >= beta) return value;
-      if (value > alpha) alpha = value;
-    }
-
-    return alpha;
-  }
-
-  qsearchNonPV(pos, ctx, ss, alpha, beta, ply) {
-    ss.ply = ply;
-    ctx.checkTime();
-    if (ctx.stopFlag) return VALUE_ZERO;
-
-    if (ply >= MAX_PLY - 1) return evaluate(pos);
-    if (pos.isDraw(ply)) return VALUE_DRAW;
-
-    const standPat = evaluate(pos);
-    if (standPat >= beta) return standPat;
-    if (standPat > alpha) alpha = standPat;
-
-    const moveList = new MoveList();
-    generateCaptures(pos, moveList);
-
-    const goodCaptures = [];
-    for (let i = 0; i < moveList.size; i++) {
-      const m = moveList.moves[i];
-      if (pos.seeGE(m, 0)) {
-        goodCaptures.push({ move: m, score: scoreMove(ss, pos, m, MOVE_NONE, this.history) });
+      if (this.stopFlag) return VALUE_ZERO;
+      if (value > bestValue) {
+        bestValue = value;
+        if (value > alpha) {
+          alpha = value;
+          if (value >= beta) break;
+        }
       }
     }
-    goodCaptures.sort((a, b) => b.score - a.score);
 
-    for (let i = 0; i < goodCaptures.length && !ctx.stopFlag; i++) {
-      const m = goodCaptures[i].move;
-      if (!pos.doMove(m)) continue;
-
-      ctx.nodes++;
-      const value = -this.qsearchNonPV(pos, ctx, ss, -beta, -alpha, ply + 1);
-      pos.undoMove(m);
-
-      if (ctx.stopFlag) return VALUE_ZERO;
-      if (value >= beta) return value;
-      if (value > alpha) alpha = value;
-    }
-
-    return alpha;
+    return bestValue;
   }
 
-  // =============== LMR Reduction ===============
+  qsearchNonPV(pos, ss, alpha, beta) {
+    ss.ply = Array.from(this.stack).findIndex(s => s === ss);
+    if (ss.ply < 0) ss.ply = 0;
+    ss.inCheck = pos.inCheck();
 
-  lmrReduction(improving, depth, moveCount) {
-    // Pikafish LMR: reduction = log(depth) * log(moveCount) / redu_1
-    const redu_1 = 1.95;
-    let r = Math.log(depth) * Math.log(moveCount) / redu_1;
-    r = Math.floor(r);
-    if (r < 0) r = 0;
+    this.nodes++;
+    if (this.nodes % 4096 === 0 && Date.now() - this.startTime >= this.moveTime) {
+      this.stopFlag = true;
+      return VALUE_ZERO;
+    }
 
-    if (!improving) r++;
+    if (ss.ply >= MAX_PLY) return ss.inCheck ? VALUE_ZERO : evaluate(pos);
 
-    // Don't reduce below 1
-    if (r >= depth) r = depth - 1;
-    if (r < 0) r = 0;
+    let result = VALUE_ZERO;
+    if (pos.ruleJudge(result, ss.ply)) return result === VALUE_DRAW ? VALUE_DRAW - 1 + (this.nodes & 2) : result;
 
+    let bestValue = ss.inCheck ? -VALUE_INFINITE : evaluate(pos);
+    if (bestValue >= beta) return bestValue;
+    if (bestValue > alpha) alpha = bestValue;
+
+    const moves = [];
+    pos.generateLegalMoves(moves);
+    const captures = moves.filter(m => {
+      const captured = pos.board[toSq(m)];
+      return captured !== NO_PIECE && pos.seeGE(m, 0);
+    });
+
+    const scored = captures.map(m => ({
+      move: m,
+      score: PieceValue[EG][pos.board[toSq(m)]] - PieceValue[EG][pos.board[fromSq(m)]] / 100
+    }));
+    scored.sort((a, b) => b.score - a.score);
+
+    for (const { move: m } of scored) {
+      if (!pos.doMove(m)) continue;
+      this.nodes++;
+      const nextSS = this.stack[ss.ply + 1];
+      const value = -this.qsearchNonPV(pos, nextSS, -beta, -alpha);
+      pos.undoMove(m);
+
+      if (this.stopFlag) return VALUE_ZERO;
+      if (value > bestValue) {
+        bestValue = value;
+        if (value > alpha) {
+          alpha = value;
+          if (value >= beta) break;
+        }
+      }
+    }
+
+    return bestValue;
+  }
+
+  // =============== Move Scoring ===============
+  scoreMove(ss, pos, m, ttMove) {
+    if (m === ttMove) return 10000000;
+
+    const from = fromSq(m);
+    const to = toSq(m);
+    const captured = pos.board[to];
+    const pc = pos.board[from];
+
+    if (captured !== NO_PIECE) {
+      return 5000000 + PieceValue[EG][captured] - PieceValue[EG][pc] / 100;
+    }
+
+    // Quiets
+    if (ss.killers[0] === m) return 2000000;
+    if (ss.killers[1] === m) return 1900000;
+
+    return Math.min(1800000, this.history.mainHistory[pos.sideToMove].get(from, to));
+  }
+
+  // Pre-compute LMR reduction table
+  static initReductions() {
+    const r = new Int32Array(MAX_MOVES);
+    for (let i = 1; i < MAX_MOVES; i++) {
+      r[i] = Math.floor((redu_3 / 1000.0 + Math.log(1) / 2) * Math.log(i));
+    }
     return r;
   }
 }
+
+// Initialize reductions table
+Search.prototype.Reductions = Search.initReductions();

@@ -430,7 +430,8 @@ export class Position {
     this.gamePly--;
   }
 
-  doNullMove(newSt) {
+  doNullMove() {
+    const newSt = new StateInfo();
     newSt.previous = this.st;
     newSt.lastMove = MOVE_NONE;
     newSt.capturedPiece = NO_PIECE;
@@ -443,6 +444,7 @@ export class Position {
     this.sideToMove ^= 1;
     this.st = newSt;
     this.setCheckInfo(newSt);
+    return true;
   }
 
   undoNullMove() {
