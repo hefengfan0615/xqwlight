@@ -168,7 +168,7 @@ class CChess {
     this.fenHistory.push(this.pos.fen());
 
     // Play sound for capture
-    const captured = this.pos.st.captured;
+    const captured = this.pos.st.capturedPiece;
     if (captured !== NO_PIECE && this.board.soundEnabled) {
       this.playSound('capture');
     } else if (this.pos.inCheck() && this.board.soundEnabled) {
