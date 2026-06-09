@@ -104,7 +104,8 @@
           <option value="2">专业</option>
         </select></div>
         <div style="height:4px"></div>
-        <div class="info" id="searchInfo"></div>
+        <div class="info" id="searchInfo" style="white-space:pre;font-family:monospace;line-height:1.4;max-height:200px;overflow:auto"></div>
+        <div class="info" id="pvInfo" style="white-space:pre;font-family:monospace;line-height:1.4;max-height:120px;overflow:auto;margin-top:2px"></div>
         <div style="height:8px"></div>
         <div><label>
           <input type="checkbox" class="checkbox" id="chkAnimated" checked>
@@ -158,6 +159,54 @@
     const chkSound = document.getElementById('chkSound');
     const statusText = document.getElementById('statusText');
     const searchInfo = document.getElementById('searchInfo');
+    const pvInfo = document.getElementById('pvInfo');
+
+    // Info lines buffer (UCI-style)
+    const infoLines = [];
+    const VALUE_MATE = 32000;
+    const MATE_THRESHOLD = VALUE_MATE - 240; // VALUE_MATE_IN_MAX_PLY
+    function formatScore(v) {
+      if (v === undefined || v === null) return 'cp 0';
+      // Mate scores: positive = side to move wins in N plies
+      if (v >= MATE_THRESHOLD) {
+        const moves = Math.ceil((VALUE_MATE - v) / 2);
+        return 'mate ' + moves;
+      }
+      if (v <= -MATE_THRESHOLD) {
+        const moves = -Math.ceil((VALUE_MATE + v) / 2);
+        return 'mate ' + moves;
+      }
+      return 'cp ' + v;
+    }
+    function formatInfo(info) {
+      // info: {depth, seldepth, score, pv, nodes, nps, time, hashfull, multipv}
+      const parts = [];
+      parts.push(`深度 ${info.depth}`);
+      if (info.seldepth !== undefined) parts.push(`选择深度 ${info.seldepth}`);
+      parts.push(`评分 ${formatScore(info.score)}`);
+      if (info.time !== undefined) parts.push(`用时 ${info.time}ms`);
+      if (info.nodes !== undefined) parts.push(`节点 ${info.nodes.toLocaleString()}`);
+      if (info.nps !== undefined && info.nps > 0) parts.push(`NPS ${info.nps.toLocaleString()}`);
+      if (info.hashfull !== undefined) parts.push(`TT ${info.hashfull}/1000`);
+      return parts.join('  ');
+    }
+    search.onInfo = (info) => {
+      infoLines.push(formatInfo(info));
+      if (infoLines.length > 20) infoLines.shift();
+      searchInfo.textContent = infoLines.join('\n');
+      // Update PV (always show latest full PV)
+      if (info.pv && info.pv.length > 0) {
+        const pvStr = info.pv.map(m => pos.moveToString(m)).join(' ');
+        pvInfo.textContent = `最佳着法: ${pvStr}`;
+      } else {
+        pvInfo.textContent = '最佳着法: (无)';
+      }
+    };
+    search.onBestMove = (m, v) => {
+      infoLines.push('—— 思考完成 ——');
+      infoLines.push(`最佳着法: ${m !== undefined && m !== -1 ? pos.moveToString(m) : '(无)'}  评分 ${formatScore(v)}`);
+      searchInfo.textContent = infoLines.join('\n');
+    };
 
     // Game state
     const pos = new Position();
@@ -188,6 +237,8 @@
       selMoveList.innerHTML = '<option selected value="0">=== 开始 ===</option>';
       statusText.textContent = '';
       searchInfo.textContent = '';
+      pvInfo.textContent = '';
+      infoLines.length = 0;
       updateBoard();
 
       if (mode === 1) {
@@ -314,6 +365,8 @@
       busy = true;
       statusText.textContent = '电脑思考中...';
       searchInfo.textContent = '';
+      pvInfo.textContent = '';
+      infoLines.length = 0;
       updateBoard();
 
       const timeMs = LEVEL_TIMES[level] || 2000;
@@ -326,7 +379,6 @@
           maxDepth: maxDepth,
         });
 
-        searchInfo.textContent = `搜索节点: ${search.nodes.toLocaleString()}\n深度: ${search.rootDepth}`;
         busy = false;
         statusText.textContent = '';
 

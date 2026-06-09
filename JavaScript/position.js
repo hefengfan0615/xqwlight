@@ -416,60 +416,90 @@ export class Position {
     newSt.pliesFromNull = this.st.pliesFromNull;
     newSt.previous = this.st;
 
-    this.st = newSt;
-    this.st.move = m;
-
     // Increment ply counters
-    this.gamePly++;
-    this.st.rule60++;
-    this.st.pliesFromNull++;
+    newSt.rule60++;
+    newSt.pliesFromNull++;
 
     // Hash key update
-    let k = this.st.previous.key ^ Zobrist_Side;
+    let k = this.st.key ^ Zobrist_Side;
 
     // Capture handling (C++: capture before move_piece)
     if (captured !== NO_PIECE) {
       const capsq = to;
 
-      // Remove captured piece from board
-      this.removePiece(capsq);
-
       // Update hash key
       k ^= Zobrist_Pieces[captured][capsq];
-      this.st.materialKey ^= Zobrist_Pieces[captured][this.pieceCount[them][typeOf(captured)]];
+      newSt.materialKey ^= Zobrist_Pieces[captured][this.pieceCount[them][typeOf(captured)]];
 
       // Reset rule 60 counter on capture
-      this.st.rule60 = 0;
+      newSt.rule60 = 0;
     }
 
     // Update hash key for the moving piece
     k ^= Zobrist_Pieces[pc][from] ^ Zobrist_Pieces[pc][to];
 
-    // Move the piece (C++: move_piece, not remove+put)
+    // Backup all the mutable state so we can roll back atomically
+    const boardBackup = new Uint8Array(this.board);
+    const byColorBackup = [this.byColorBB[0], this.byColorBB[1]];
+    const byTypeBackup = this.byTypeBB.slice();
+    const pieceCountBackup = [this.pieceCount[0].slice(), this.pieceCount[1].slice()];
+    const pieceListBackup = [
+      this.pieceList[0].map(arr => new Int8Array(arr)),
+      this.pieceList[1].map(arr => new Int8Array(arr)),
+    ];
+    const indexBackup = [
+      new Int8Array(this.index[0]),
+      new Int8Array(this.index[1]),
+    ];
+    const occupiedBackup = this.occupied;
+    const sideToMoveBackup = this.sideToMove;
+    const gamePlyBackup = this.gamePly;
+
+    // Apply the move to board/bitboards first
+    // Remove captured piece
+    if (captured !== NO_PIECE) {
+      this.removePiece(to);
+    }
+    // Move the piece
     this.movePiece(from, to);
-
-    // Set captured piece in state
-    this.st.capturedPiece = captured;
-
-    // Store the final key
-    this.st.key = k;
-
-    // Calculate checkers (simplified: we compute after side switch)
-    const givesCheck = this.givesCheckPostMove(m, us);
-    this.st.checkersBB = givesCheck ? this.checkersTo(us, this.kingSquare(them), this.occupied) : 0n;
 
     // Switch sides
     this.sideToMove = them;
 
-    // Set check info for new position
-    this.setCheckInfo(this.st);
+    // Calculate checkers
+    const checkersBB = this.checkersTo(us, this.kingSquare(them), this.occupied);
+    const givesCheck = checkersBB !== 0n;
+
+    // Set state fields
+    newSt.move = m;
+    newSt.capturedPiece = captured;
+    newSt.key = k;
+    newSt.checkersBB = checkersBB;
+
+    // Set check info
+    this.setCheckInfo(newSt);
 
     // Verify legality: our king must not be in check after the move
     if (this.isKingInCheck(us)) {
-      this.undoMove(m);
+      // Roll back: restore everything to its pre-doMove state
+      this.board.set(boardBackup);
+      this.byColorBB = byColorBackup;
+      this.byTypeBB = byTypeBackup;
+      this.pieceCount[0].set(pieceCountBackup[0]);
+      this.pieceCount[1].set(pieceCountBackup[1]);
+      this.pieceList[0] = pieceListBackup[0];
+      this.pieceList[1] = pieceListBackup[1];
+      this.index[0].set(indexBackup[0]);
+      this.index[1].set(indexBackup[1]);
+      this.occupied = occupiedBackup;
+      this.sideToMove = sideToMoveBackup;
+      this.gamePly = gamePlyBackup;
       return false;
     }
 
+    // Commit: actually update the state and counters
+    this.st = newSt;
+    this.gamePly++;
     return true;
   }
 
@@ -501,6 +531,11 @@ export class Position {
 
   // C++ Position::undo_move() - unmakes a move
   undoMove(m) {
+    if (!this.st) {
+      // Should never happen, but guard against null state
+      this.sideToMove ^= 1;
+      return;
+    }
     this.sideToMove ^= 1;
 
     const from = fromSq(m);
@@ -780,6 +815,48 @@ export class Position {
   }
 
   // ================= MOVE GENERATION =================
+
+  // Iterator-based legal move generation
+  generateLegalMovesGen() {
+    return MoveListGen.LEGAL(this);
+  }
+  generateMovesGen() {
+    return MoveListGen.ALL(this);
+  }
+  generateCapturesGen() {
+    return MoveListGen.CAPTURES(this);
+  }
+  generateLegalCapturesGen() {
+    const self = this;
+    return (function*() {
+      for (const m of MoveListGen.CAPTURES(self)) {
+        if (self.isLegalMove(m)) yield m;
+      }
+    })();
+  }
+  generateLegalQuietsGen() {
+    const self = this;
+    return (function*() {
+      for (const m of MoveListGen.LEGAL(self)) {
+        if (self.board[toSq(m)] === NO_PIECE) yield m;
+      }
+    })();
+  }
+  generateLegalEvasionsGen() {
+    const self = this;
+    return (function*() {
+      if (!self.inCheck()) return;
+      for (const m of MoveListGen.LEGAL(self)) yield m;
+    })();
+  }
+
+  // Whether the previous move captured a piece (i.e. current pos was reached by capture)
+  captured_piece_helper(_ss) {
+    return (this.st && this.st.capturedPiece !== NO_PIECE);
+  }
+  captured_piece_helper_safe(_ss) {
+    return (this.st && this.st.capturedPiece !== NO_PIECE);
+  }
 
   generateLegalMoves(arr) {
     arr.length = 0;
