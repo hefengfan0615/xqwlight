@@ -30,7 +30,7 @@ import { psq } from './pikafish_evaluate.js';
 
 import {
   bbSet, bbClr, bbTest, bbEmpty, popcount, lsb,
-  SquareBB, FileBB, RankBB, PseudoAttacks,
+  SquareBB, FileBB, RankBB, PseudoAttacks, BetweenBB,
   attacksByPieceType as attacks_bb,
   rookAttacks, cannonAttacks, knightAttacks,
   bishopAttacks, advisorAttacks, kingAttacks, pawnAttacks,
@@ -246,85 +246,139 @@ export class Position {
   // ================= STATE / CHECK INFO =================
 
   setState(si) {
-    // Compute state for the position
     const st = this.st;
 
-    // Hash key
-    let k = 0n, pk = 0n, mk = 0n;
+    // Initialize
+    st.key = 0n;
+    st.materialKey = 0n;
+    st.material = [0, 0];
+
+    // Compute checkers first (C++: checkers_to(~sideToMove, square<KING>(sideToMove)))
+    const ksq = this.kingSquare(this.sideToMove);
+    st.checkersBB = (ksq !== SQ_NONE) ? this.checkersTo(this.sideToMove ^ 1, ksq, this.occupied) : 0n;
+    st.move = MOVE_NONE;
+
+    // Set check info (blockers, pinners, needSlowCheck, checkSquares)
+    this.setCheckInfo(st);
+
+    // Hash key and material
     for (let s = 0; s < SQUARE_NB; s++) {
       const pc = this.board[s];
       if (pc !== NO_PIECE) {
-        k ^= Zobrist_Pieces[pc][s];
-        if (typeOf(pc) === PAWN) pk ^= Zobrist_Pieces[pc][s];
-        // Material key: piece type per side
-        mk ^= Zobrist_Pieces[pc][s];
+        st.key ^= Zobrist_Pieces[pc][s];
+        if (typeOf(pc) !== KING) {
+          st.material[colorOf(pc)] += PieceValue[MG][pc];
+        }
       }
     }
-    if (this.sideToMove === BLACK) k ^= Zobrist_Side;
-    st.key = k;
-    st.pawnKey = pk;
-    st.materialKey = mk;
+    if (this.sideToMove === BLACK) st.key ^= Zobrist_Side;
+
+    // Material key: hash each piece with its count index
+    for (let c = 0; c < COLOR_NB; c++) {
+      for (let pt = ROOK; pt <= KING; pt++) {
+        for (let cnt = 0; cnt < this.pieceCount[c][pt]; cnt++) {
+          st.materialKey ^= Zobrist_Pieces[makePiece(c, pt)][cnt];
+        }
+      }
+    }
 
     // rule60
     st.rule60 = 0;
     st.pliesFromNull = 0;
-
-    // Set check info
-    this.setCheckInfo(st);
-
-    // repetition
     st.repetition = 0;
   }
 
   setCheckInfo(st) {
     const us = this.sideToMove;
     const them = us ^ 1;
-    const ksq = this.kingSquare(us);
+    const uksq = this.kingSquare(us);
+    const oksq = this.kingSquare(them);
 
-    st.checkersBB = 0n;
-    st.blockersForKing[us] = 0n;
-    st.pinners[us] = 0n;
+    // Both sides' blockers and pinners (C++: blockers_for_king for both sides)
+    st.blockersForKing[us] = this.computeBlockers(this.byColorBB[them], uksq, st, us, false);
+    st.blockersForKing[them] = this.computeBlockers(this.byColorBB[us], oksq, st, them, true);
 
-    if (ksq === SQ_NONE) return;
+    // needSlowCheck: in check, or enemy cannons can attack via rook lines
+    st.needSlowCheck = (st.checkersBB !== 0n) ||
+      ((PseudoAttacks[ROOK][uksq] & this.byTypeBB[CANNON] & this.byColorBB[them]) !== 0n);
 
-    // Checkers: attacks from opponent pieces on the king square
-    st.checkersBB = checkersToKing(this, ksq, them);
-
-    // Slider blockers and pinners
-    this.computeBlockersAndPinners(st, us, ksq);
+    // Check squares: squares that give check to opponent's king
+    st.checkSquares[PAWN]   = this._pawnAttacksTo(us, oksq);
+    st.checkSquares[KNIGHT] = knightAttacks(oksq, this.occupied);
+    st.checkSquares[CANNON] = cannonAttacks(oksq, this.occupied);
+    st.checkSquares[ROOK]   = rookAttacks(oksq, this.occupied);
+    st.checkSquares[KING]   = 0n;
+    st.checkSquares[ADVISOR] = 0n;
+    st.checkSquares[BISHOP] = 0n;
   }
 
-  computeBlockersAndPinners(st, us, ksq) {
-    const them = us ^ 1;
-    const enemyRooks = this.byTypeBB[ROOK] & this.byColorBB[them];
-    const enemyCannons = this.byTypeBB[CANNON] & this.byColorBB[them];
+  // C++ blockers_for_king: finds pieces blocking slider attacks on square s
+  // sliders param: bitboard of enemy pieces to consider as snipers
+  // pinnersOutRef: which StateInfo's pinners array to write to
+  // pinColor: color to check for pinned pieces
+  // isThemSide: whether setting blockersForKing[them] (swaps pinners index)
+  computeBlockers(sliders, s, st, pinColor, isThemSide) {
+    let blockers = 0n;
+    const sniperColor = isThemSide ? pinColor : (pinColor ^ 1);
+    // Set pinners for the appropriate side
+    const pinnIdx = isThemSide ? pinColor : (pinColor ^ 1);
 
-    // Snipers = sliding pieces that can attack king on an empty board
+    // Snipers: rook pseudo attacks from s intersecting with enemy rooks/cannons/kings, plus knight pseudo attacks
     const snipers = (
-      (PseudoAttacks[ROOK][ksq] & enemyRooks) |
-      (PseudoAttacks[CANNON][ksq] & enemyCannons)
-    );
+      (PseudoAttacks[ROOK][s] & (this.byTypeBB[ROOK] | this.byTypeBB[CANNON] | this.byTypeBB[KING])) |
+      (PseudoAttacks[KNIGHT][s] & this.byTypeBB[KNIGHT])
+    ) & sliders;
 
-    st.blockersForKing[us] = 0n;
-    st.pinners[us] = 0n;
+    // Occupancy with snipers removed (except cannons, which need mount pieces)
+    let occupancy = this.occupied ^ (snipers & ~this.byTypeBB[CANNON]);
 
     let sniperBB = snipers;
     while (sniperBB !== 0n) {
       const sniperSq = lsb(sniperBB);
       sniperBB ^= SquareBB[sniperSq];
+      const sniperPc = this.board[sniperSq];
+      const isCannon = typeOf(sniperPc) === CANNON;
 
-      const b = this.between(ksq, sniperSq) & this.occupied;
-      if (b === 0n) {
-        // No blocker: direct attack (checker already handled by checkersToKing)
-      } else if (!(b & (b - 1n))) {
-        // Exactly one piece between king and sniper: potential blocker
-        st.blockersForKing[us] |= b;
-        // If the blocker is our piece, it's pinned by the sniper
-        if (b & this.byColorBB[us]) {
-          st.pinners[us] |= SquareBB[sniperSq];
+      const b = BetweenBB[s][sniperSq] !== undefined ? BetweenBB[s][sniperSq] : 0n;
+      const betweenPieces = b & (isCannon ? (this.occupied ^ SquareBB[sniperSq]) : occupancy);
+
+      if (!bbEmpty(betweenPieces)) {
+        const cnt = popcount(betweenPieces);
+        const valid = isCannon ? (cnt === 2) : (cnt === 1);
+
+        if (valid) {
+          blockers |= betweenPieces;
+          if (betweenPieces & this.byColorBB[pinColor]) {
+            st.pinners[pinnIdx] |= SquareBB[sniperSq];
+          }
         }
       }
     }
+    return blockers;
+  }
+
+  // Helper: pawn squares that attack a given square for a given color
+  _pawnAttacksTo(c, s) {
+    let result = 0n;
+    const f = fileOf(s), r = rankOf(s);
+    // WHITE pawns move up (NORTH), attack NORTH-EAST and NORTH-WEST
+    // BLACK pawns move down (SOUTH), attack SOUTH-EAST and SOUTH-WEST
+    const dir = c === WHITE ? -1 : 1; // rank offset for attacker
+    const attacks = [
+      { df: -1, dr: dir }, { df: 1, dr: dir }
+    ];
+    for (const {df, dr} of attacks) {
+      const nf = f + df, nr = r + dr;
+      if (nf >= 0 && nf < FILE_NB && nr >= 0 && nr < RANK_NB) {
+        // For black pawns: after crossing river (rank <= 4), can also move sideways
+        // But for pawn_attacks_to, we just check if a pawn at (nf, nr) can attack s
+        // A pawn at (nf, nr) attacks s if s is one step forward for that pawn
+        // WHITE pawn at (nf, nr) attacks s if s is at (nf-1, nr-1) or (nf+1, nr-1)
+        // This is the same logic reversed
+        result |= SquareBB[makeSquare(nf, nr)];
+      }
+    }
+    return result;
   }
 
   between(s1, s2) {
@@ -356,57 +410,61 @@ export class Position {
     const pc = this.board[from];
     const captured = this.board[to];
 
-    // Initialize new state info
+    // Copy old state fields (before key offset) to new state (C++ memcpy pattern)
+    newSt.materialKey = this.st.materialKey;
+    newSt.rule60 = this.st.rule60;
+    newSt.pliesFromNull = this.st.pliesFromNull;
     newSt.previous = this.st;
-    newSt.lastMove = m;
-    newSt.capturedPiece = captured;
 
-    // Update rule60
-    newSt.rule60 = this.st.rule60 + 1;
-    newSt.pliesFromNull = this.st.pliesFromNull + 1;
+    this.st = newSt;
+    this.st.move = m;
+
+    // Increment ply counters
+    this.gamePly++;
+    this.st.rule60++;
+    this.st.pliesFromNull++;
 
     // Hash key update
-    let k = this.st.key ^ Zobrist_Side;
-    if (captured !== NO_PIECE)
-      k ^= Zobrist_Pieces[captured][to];
-    k ^= Zobrist_Pieces[pc][from] ^ Zobrist_Pieces[pc][to];
-    newSt.key = k;
+    let k = this.st.previous.key ^ Zobrist_Side;
 
-    // Pawn key
-    let pk = this.st.pawnKey;
-    if (typeOf(pc) === PAWN) {
-      pk ^= Zobrist_Pieces[pc][from] ^ Zobrist_Pieces[pc][to];
-    }
-    if (captured !== NO_PIECE && typeOf(captured) === PAWN) {
-      pk ^= Zobrist_Pieces[captured][to];
-    }
-    newSt.pawnKey = pk;
-
-    // Material key
-    let mk = this.st.materialKey;
+    // Capture handling (C++: capture before move_piece)
     if (captured !== NO_PIECE) {
-      mk ^= Zobrist_Pieces[captured][to];
-    }
-    mk ^= Zobrist_Pieces[pc][from] ^ Zobrist_Pieces[pc][to];
-    newSt.materialKey = mk;
+      const capsq = to;
 
-    // Execute the move on the board
-    this.removePiece(from);
-    if (captured !== NO_PIECE) this.removePiece(to);
-    this.putPiece(pc, to);
+      // Remove captured piece from board
+      this.removePiece(capsq);
+
+      // Update hash key
+      k ^= Zobrist_Pieces[captured][capsq];
+      this.st.materialKey ^= Zobrist_Pieces[captured][this.pieceCount[them][typeOf(captured)]];
+
+      // Reset rule 60 counter on capture
+      this.st.rule60 = 0;
+    }
+
+    // Update hash key for the moving piece
+    k ^= Zobrist_Pieces[pc][from] ^ Zobrist_Pieces[pc][to];
+
+    // Move the piece (C++: move_piece, not remove+put)
+    this.movePiece(from, to);
+
+    // Set captured piece in state
+    this.st.capturedPiece = captured;
+
+    // Store the final key
+    this.st.key = k;
+
+    // Calculate checkers (simplified: we compute after side switch)
+    const givesCheck = this.givesCheckPostMove(m, us);
+    this.st.checkersBB = givesCheck ? this.checkersTo(us, this.kingSquare(them), this.occupied) : 0n;
 
     // Switch sides
     this.sideToMove = them;
-    this.st = newSt;
-    this.gamePly++;
 
-    // Set check info
-    this.setCheckInfo(newSt);
+    // Set check info for new position
+    this.setCheckInfo(this.st);
 
-    // Repetition check
-    newSt.repetition = 0;
-
-    // Check legality: our king must not be in check
+    // Verify legality: our king must not be in check after the move
     if (this.isKingInCheck(us)) {
       this.undoMove(m);
       return false;
@@ -415,17 +473,48 @@ export class Position {
     return true;
   }
 
-  undoMove(m) {
+  // Post-move gives check detection (used after move_piece)
+  givesCheckPostMove(m, us) {
     const from = fromSq(m);
     const to = toSq(m);
-    const pc = this.board[to];
-    const captured = this.st.capturedPiece;
+    const them = us ^ 1;
+    const oksq = this.kingSquare(them);
+    if (oksq === SQ_NONE) return false;
 
+    const pc = this.board[to]; // piece is now at 'to'
+    const pt = typeOf(pc);
+
+    // Direct check
+    if (pt === CANNON) {
+      if (cannonAttacks(to, this.occupied) & SquareBB[oksq]) return true;
+    } else if (this.st.checkSquares[pt] && (this.st.checkSquares[pt] & SquareBB[to])) {
+      return true;
+    }
+
+    // Discovered check: if the moved piece was blocking a slider
+    if (this.st.previous.blockersForKing[them] & SquareBB[from]) {
+      return true;
+    }
+
+    return false;
+  }
+
+  // C++ Position::undo_move() - unmakes a move
+  undoMove(m) {
     this.sideToMove ^= 1;
-    this.removePiece(to);
-    if (captured !== NO_PIECE) this.putPiece(captured, to);
-    this.putPiece(pc, from);
 
+    const from = fromSq(m);
+    const to = toSq(m);
+
+    // Move piece back (C++: move_piece(to, from))
+    this.movePiece(to, from);
+
+    // Restore captured piece if any
+    if (this.st.capturedPiece !== NO_PIECE) {
+      this.putPiece(this.st.capturedPiece, to);
+    }
+
+    // Restore previous state
     this.st = this.st.previous;
     this.gamePly--;
   }
@@ -468,6 +557,7 @@ export class Position {
     return this.st.checkersBB !== 0n;
   }
 
+  // C++ Position::legal() - tests whether a pseudo-legal move is legal
   legal(m) {
     const us = this.sideToMove;
     const from = fromSq(m);
@@ -477,35 +567,32 @@ export class Position {
     if (colorOf(pc) !== us) return false;
     if (!this.pseudoLegal(m)) return false;
 
-    const ksq = this.kingSquare(us);
-    if (ksq === SQ_NONE) return true;
-
     const them = us ^ 1;
-    const st = this.st;
+    // Occupancy after the move
+    const occupied = (this.occupied ^ SquareBB[from]) | SquareBB[to];
+    // King square: if moving king, it's 'to', otherwise the current king square
+    const ksq = typeOf(pc) === KING ? to : this.kingSquare(us);
 
-    // If the moving piece is the king, check if destination is attacked
-    if (typeOf(pc) === KING) {
-      return checkersToKing(this, to, them) === 0n;
-    }
+    // Fast path: non-king move, not pinned, no slow check needed
+    if (!this.st.needSlowCheck && ksq !== to && !(this.st.blockersForKing[us] & SquareBB[from]))
+      return true;
 
-    // If the moving piece is not a blocker/pinner, and we're not in double check, the move is legal
-    if (!st.needSlowCheck || st.needSlowCheck === false) {
-      // Fast check: only need to verify if piece was pinned or moving from check
-      if (!(SquareBB[from] & st.blockersForKing[us])) {
-        if (st.checkersBB === 0n) return true;
-        // If in single check, piece must capture the checker
-        if (!(st.checkersBB & (st.checkersBB - 1n))) {
-          // Single checker: piece must capture or block
-          return (SquareBB[to] & st.checkersBB) || this.checkSquaresContain(to, us);
-        }
-      }
-    }
+    // King move: check destination is not attacked by opponent
+    if (typeOf(pc) === KING)
+      return !this.checkersTo(them, to, occupied);
 
-    // Slow check: make move and test
-    this.doSimpleMove(from, to);
-    const result = !this.isKingInCheck(us);
-    this.undoSimpleMove(from, to, pc, this.board[to]);
-    return result;
+    // Non-king move: king must not be under attack after the move
+    return !(this.checkersTo(them, ksq, occupied) & ~SquareBB[to]);
+  }
+
+  // C++ checkers_to: pieces of color c that give check to square s
+  checkersTo(c, s, occupied) {
+    return (
+      (this._pawnAttacksTo(c, s) & this.byTypeBB[PAWN]) |
+      (knightAttacks(s, occupied) & this.byTypeBB[KNIGHT]) |
+      (rookAttacks(s, occupied) & (this.byTypeBB[ROOK] | this.byTypeBB[KING])) |
+      (cannonAttacks(s, occupied) & this.byTypeBB[CANNON])
+    ) & this.byColorBB[c];
   }
 
   checkSquaresContain(to, us) {
@@ -627,13 +714,9 @@ export class Position {
     return cnt + this.pieceCount[c][KING];
   }
 
-  // Material calculation
+  // Material calculation (from incremental tracking, matching C++)
   material(c) {
-    let val = 0;
-    for (let pt = ROOK; pt <= BISHOP; pt++) {
-      val += this.pieceCount[c][pt] * PieceValue[MG][W_ROOK + (pt - ROOK)];
-    }
-    return val;
+    return this.st.material ? this.st.material[c] : 0;
   }
 
   materialSum() {

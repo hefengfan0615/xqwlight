@@ -127,7 +127,6 @@
     import { Position } from './position.js';
     import Search from './pikafish_search.js';
     import { Board } from './board.js';
-    import { probeBook } from './book.js';
     import {
       NO_PIECE, WHITE, BLACK,
       colorOf, typeOf, fileOf, rankOf, makeSquare,
@@ -319,20 +318,6 @@
 
       const timeMs = LEVEL_TIMES[level] || 2000;
       const maxDepth = LEVEL_DEPTHS[level] || 10;
-
-      // Try opening book
-      if (history.length < 4) {
-        const bookMoveStr = probeBook(pos.fen());
-        if (bookMoveStr) {
-          const m = pos.moveFromString(bookMoveStr);
-          if (m !== MOVE_NONE && pos.isLegalMove(m)) {
-            busy = false;
-            statusText.textContent = '';
-            doMakeMove(m);
-            return;
-          }
-        }
-      }
 
       // Search in an async way using setTimeout
       setTimeout(() => {
