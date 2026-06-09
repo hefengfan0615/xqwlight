@@ -526,4 +526,89 @@ function initRankBB() {
 }
 initRankBB();
 
-export { BetweenBB, LineBB, PseudoAttacks, KnightLeg };
+export { kingLineBB as LineBBFunc, BetweenBB, PseudoAttacks, KnightLeg };
+
+/**
+ * Checkers to king: find all opponent pieces attacking the king square
+ */
+export function checkersToKing(pos, ksq, them) {
+  const occupied = pos.occupied;
+  let checkers = 0n;
+
+  // Rook attacks on king
+  checkers |= rookAttacks(ksq, occupied) & pos.byColorBB[them] & pos.byTypeBB[ROOK];
+
+  // Cannon attacks on king (capture mode)
+  checkers |= cannonCaptureAttacksOnKing(ksq, occupied, pos.byColorBB[them] & pos.byTypeBB[CANNON]);
+
+  // Knight attacks on king
+  checkers |= knightAttacks(ksq, occupied) & pos.byColorBB[them] & pos.byTypeBB[KNIGHT];
+
+  // Pawn attacks on king
+  checkers |= pawnAttacksToKing(ksq, them, occupied, pos.byColorBB[them] & pos.byTypeBB[PAWN], pos);
+
+  // Flying general (King check)
+  if (them !== undefined) {
+    const enemyKingSq = pos.kingSquare(them);
+    if (enemyKingSq !== SQ_NONE && fileOf(ksq) === fileOf(enemyKingSq)) {
+      const betweenSquares = kingLineBB(pos, ksq, enemyKingSq);
+      if (betweenSquares === 0n || betweenSquares === occupied === 0n) {
+        // This shouldn't add as a checker from king; it's just that the two kings see each other
+      }
+    }
+  }
+
+  return checkers;
+}
+
+function cannonCaptureAttacksOnKing(ksq, occupied, enemyCannonsBB) {
+  let result = 0n;
+  let cannons = enemyCannonsBB;
+  while (cannons !== 0n) {
+    const sq = lsb(cannons);
+    cannons ^= SquareBB[sq];
+    // Check if this cannon can capture the king (jumping exactly one piece)
+    if (fileOf(sq) === fileOf(ksq) || rankOf(sq) === rankOf(ksq)) {
+      const betweenBB = kingLineBB(null, sq, ksq);
+      const between = betweenBB & occupied;
+      const cnt = popcount(between);
+      if (cnt === 1) {
+        result |= SquareBB[sq];
+      }
+    }
+  }
+  return result;
+}
+
+function pawnAttacksToKing(ksq, them, occupied, enemyPawnsBB, pos) {
+  // Pawns attack forward: white pawns push north, black pawns push south
+  // Check which pawns can attack the king square
+  let result = 0n;
+  let pawns = enemyPawnsBB;
+  while (pawns !== 0n) {
+    const sq = lsb(pawns);
+    pawns ^= SquareBB[sq];
+    // Check if this pawn attacks the king square
+    const att = pawnAttacks(sq, them);
+    if (att & SquareBB[ksq]) {
+      result |= SquareBB[sq];
+    }
+  }
+  return result;
+}
+
+function kingLineBB(pos, s1, s2) {
+  if (s1 === s2) return 0n;
+  if (fileOf(s1) !== fileOf(s2) && rankOf(s1) !== rankOf(s2)) return 0n;
+  let bb = 0n;
+  const d = fileOf(s1) === fileOf(s2)
+    ? (rankOf(s2) > rankOf(s1) ? NORTH : SOUTH)
+    : (fileOf(s2) > fileOf(s1) ? EAST : WEST);
+  for (let s = s1 + d; s !== s2; s += d) {
+    if (s < 0 || s >= SQUARE_NB) break;
+    bb |= SquareBB[s];
+  }
+  return bb;
+}
+
+export { kingLineBB, cannonCaptureAttacksOnKing, pawnAttacksToKing };

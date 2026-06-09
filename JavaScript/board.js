@@ -16,8 +16,12 @@ import {
 
 // Board rendering constants
 const BOARD_SIZE = 520;        // Canvas size
+// Chinese chess: 9 columns (8 gaps), 10 rows (9 gaps)
+// Use the larger gap count for uniform square sizing to fit vertically
 const MARGIN = 30;             // Margin from edge
-const GRID_SIZE = (BOARD_SIZE - 2 * MARGIN) / 8;  // Cell size (9 files = 8 gaps)
+const SQUARE_SIZE = Math.floor((BOARD_SIZE - 2 * MARGIN) / 9); // 51px for 10 ranks
+const OFFSET_X = Math.floor((BOARD_SIZE - 8 * SQUARE_SIZE) / 2); // Center horizontally
+const OFFSET_Y = MARGIN;       // Top margin for 10th rank
 
 // Piece labels (Chinese characters)
 const PIECE_LABELS = {
@@ -31,8 +35,9 @@ export class Board {
   constructor(canvasId) {
     this.canvas = document.getElementById(canvasId);
     this.ctx = this.canvas.getContext('2d');
-    this.squareSize = GRID_SIZE;
-    this.offset = MARGIN;
+    this.squareSize = SQUARE_SIZE;
+    this.offsetX = OFFSET_X;
+    this.offsetY = OFFSET_Y;
     this.animated = true;
     this.soundEnabled = true;
     this.selectedSq = -1;
@@ -67,18 +72,18 @@ export class Board {
     let x, y;
 
     if (this.flipped) {
-      x = this.offset + (FILE_NB - 1 - f) * this.squareSize;
-      y = this.offset + r * this.squareSize;
+      x = this.offsetX + (FILE_NB - 1 - f) * this.squareSize;
+      y = this.offsetY + r * this.squareSize;
     } else {
-      x = this.offset + f * this.squareSize;
-      y = this.offset + (RANK_NB - 1 - r) * this.squareSize;
+      x = this.offsetX + f * this.squareSize;
+      y = this.offsetY + (RANK_NB - 1 - r) * this.squareSize;
     }
     return { x, y };
   }
 
   canvasToBoard(cx, cy) {
-    const x = cx - this.offset;
-    const y = cy - this.offset;
+    const x = cx - this.offsetX;
+    const y = cy - this.offsetY;
     let f = Math.round(x / this.squareSize);
     let r = Math.round(y / this.squareSize);
 
@@ -106,7 +111,7 @@ export class Board {
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 2;
     ctx.strokeRect(
-      this.offset - 2, this.offset - 2,
+      this.offsetX - 2, this.offsetY - 2,
       (FILE_NB - 1) * this.squareSize + 4,
       (RANK_NB - 1) * this.squareSize + 4
     );
@@ -116,18 +121,18 @@ export class Board {
     ctx.lineWidth = 1;
 
     for (let f = 0; f < FILE_NB; f++) {
-      const x = this.offset + f * this.squareSize;
+      const x = this.offsetX + f * this.squareSize;
       ctx.beginPath();
-      ctx.moveTo(x, this.offset);
-      ctx.lineTo(x, this.offset + (RANK_NB - 1) * this.squareSize);
+      ctx.moveTo(x, this.offsetY);
+      ctx.lineTo(x, this.offsetY + (RANK_NB - 1) * this.squareSize);
       ctx.stroke();
     }
 
     for (let r = 0; r < RANK_NB; r++) {
-      const y = this.offset + r * this.squareSize;
+      const y = this.offsetY + r * this.squareSize;
       ctx.beginPath();
-      ctx.moveTo(this.offset, y);
-      ctx.lineTo(this.offset + (FILE_NB - 1) * this.squareSize, y);
+      ctx.moveTo(this.offsetX, y);
+      ctx.lineTo(this.offsetX + (FILE_NB - 1) * this.squareSize, y);
       ctx.stroke();
     }
 
@@ -139,9 +144,9 @@ export class Board {
     ctx.fillStyle = '#000';
     ctx.font = 'bold 18px serif';
     ctx.textAlign = 'center';
-    const riverY = this.offset + 4.5 * this.squareSize;
-    ctx.fillText('楚  河', this.offset + 1.5 * this.squareSize, riverY + 6);
-    ctx.fillText('汉  界', this.offset + 6.5 * this.squareSize, riverY + 6);
+    const riverY = this.offsetY + 4.5 * this.squareSize;
+    ctx.fillText('楚  河', this.offsetX + 1.5 * this.squareSize, riverY + 6);
+    ctx.fillText('汉  界', this.offsetX + 6.5 * this.squareSize, riverY + 6);
 
     // Highlight last move
     if (lastMove) {
@@ -188,10 +193,10 @@ export class Board {
   drawPalaceDiagonals(ctx, startRank) {
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 1;
-    const x1 = this.offset + 3 * this.squareSize;
-    const y1 = this.offset + startRank * this.squareSize;
-    const x2 = this.offset + 5 * this.squareSize;
-    const y2 = this.offset + (startRank + 2) * this.squareSize;
+    const x1 = this.offsetX + 3 * this.squareSize;
+    const y1 = this.offsetY + startRank * this.squareSize;
+    const x2 = this.offsetX + 5 * this.squareSize;
+    const y2 = this.offsetY + (startRank + 2) * this.squareSize;
 
     ctx.beginPath();
     ctx.moveTo(x1, y1);
